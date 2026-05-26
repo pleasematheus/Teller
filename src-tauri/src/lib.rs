@@ -28,7 +28,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     // Skip entirely if the schema was already initialized in a previous run.
     let count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'Financial_Entries'",
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'Production_Inputs'",
             [],
             |r| r.get(0),
         )
@@ -130,6 +130,46 @@ fn create_user(
 }
 
 #[tauri::command]
+fn check_business_setup(state: State<DbState>) -> Result<bool, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let count: i64 = conn
+        .query_row(
+            r#"SELECT COUNT(*) FROM "Business_Settings""#,
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+#[tauri::command]
+fn create_business_settings(
+    name: String,
+    investment_rate: f64,
+    profit_margin: f64,
+    state: State<DbState>,
+) -> Result<(), String> {
+    let name = name.trim().to_string();
+
+    if name.is_empty() {
+        return Err("Nome da empresa é obrigatório".to_string());
+    }
+    if !(0.0..=1.0).contains(&investment_rate) || !(0.0..=1.0).contains(&profit_margin) {
+        return Err("Taxas devem estar entre 0% e 100%".to_string());
+    }
+
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        r#"INSERT INTO "Business_Settings" (name, investment_rate, profit_margin, updated_at, created_at)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+        params![name, investment_rate, profit_margin],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn find_user(identifier: String, state: State<DbState>) -> Result<Option<String>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     lookup_user(&conn, identifier.trim()).map(|u| u.map(|row| row.nickname))
@@ -176,6 +216,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_setup,
             create_user,
+            check_business_setup,
+            create_business_settings,
             find_user,
             login
         ])
@@ -259,6 +301,47 @@ mod tests {
 
     fn find_user_in_test(conn: &Connection, identifier: &str) -> Option<String> {
         lookup_user(conn, identifier).unwrap().map(|row| row.nickname)
+    }
+
+    fn insert_business_settings(conn: &Connection, name: &str) {
+        conn.execute(
+            r#"INSERT INTO "Business_Settings" (name, investment_rate, profit_margin, updated_at, created_at)
+               VALUES (?, 0.1, 0.2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![name],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn check_business_setup_empty_returns_false() {
+        let conn = test_db();
+        let count: i64 = conn
+            .query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn check_business_setup_with_record_returns_true() {
+        let conn = test_db();
+        insert_business_settings(&conn, "Minha Empresa");
+        let count: i64 = conn
+            .query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |r| r.get(0))
+            .unwrap();
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn create_business_settings_rejects_empty_name() {
+        let name = "  ".trim().to_string();
+        assert!(name.is_empty());
+    }
+
+    #[test]
+    fn create_business_settings_rejects_rate_out_of_range() {
+        assert!(!(0.0_f64..=1.0).contains(&1.5));
+        assert!(!(0.0_f64..=1.0).contains(&-0.1));
+        assert!((0.0_f64..=1.0).contains(&0.5));
     }
 
     #[test]
