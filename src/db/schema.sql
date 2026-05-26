@@ -11,6 +11,15 @@ CREATE TABLE IF NOT EXISTS "Users" (
     "created_at"    TIMESTAMP NOT NULL
 );
 
+CREATE SEQUENCE IF NOT EXISTS business_settings_id_seq START 1;
+CREATE TABLE IF NOT EXISTS "Business_Settings" (
+    "id"              INTEGER      DEFAULT nextval('business_settings_id_seq') PRIMARY KEY,
+    "investment_rate" DECIMAL(5,4) NOT NULL DEFAULT 0,
+    "profit_margin"   DECIMAL(5,4) NOT NULL DEFAULT 0,
+    "updated_at"      TIMESTAMP    NOT NULL,
+    "created_at"      TIMESTAMP    NOT NULL
+);
+
 CREATE SEQUENCE IF NOT EXISTS products_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Products" (
     "id"                 INTEGER       DEFAULT nextval('products_id_seq') PRIMARY KEY,
@@ -27,12 +36,14 @@ CREATE TABLE IF NOT EXISTS "Products" (
 
 CREATE SEQUENCE IF NOT EXISTS product_components_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Product_Components" (
-    "id"         INTEGER   DEFAULT nextval('product_components_id_seq') PRIMARY KEY,
-    "parent_id"  INTEGER   NOT NULL,
-    "child_id"   INTEGER   NOT NULL,
-    "quantity"   INTEGER   NOT NULL,
-    "updated_at" TIMESTAMP NOT NULL,
-    "created_at" TIMESTAMP NOT NULL,
+    "id"                  INTEGER   DEFAULT nextval('product_components_id_seq') PRIMARY KEY,
+    "quantity"            INTEGER        NOT NULL,
+    "parent_id"           INTEGER        NOT NULL,
+    "child_id"            INTEGER        NOT NULL,
+    "calculated_quantity" DECIMAL(10,4),
+    "use_calculated"      BOOLEAN        NOT NULL DEFAULT FALSE,
+    "updated_at"          TIMESTAMP      NOT NULL,
+    "created_at"          TIMESTAMP      NOT NULL,
     FOREIGN KEY ("parent_id") REFERENCES "Products" ("id"),
     FOREIGN KEY ("child_id")  REFERENCES "Products" ("id"),
     CHECK ("parent_id" != "child_id")
@@ -60,12 +71,12 @@ CREATE TABLE IF NOT EXISTS "Product_Taxes" (
 
 CREATE SEQUENCE IF NOT EXISTS stock_movements_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Stock_Movements" (
-    "id"            INTEGER   DEFAULT nextval('stock_movements_id_seq') PRIMARY KEY,
-    "product_id"    INTEGER   NOT NULL,
-    "quantity"      INTEGER   NOT NULL,
-    "movement_type" VARCHAR   NOT NULL,
-    "motive"        VARCHAR   NOT NULL,
-    "created_at"    TIMESTAMP NOT NULL,
+    "id"            INTEGER       DEFAULT nextval('stock_movements_id_seq') PRIMARY KEY,
+    "product_id"    INTEGER       NOT NULL,
+    "quantity"      DECIMAL(10,4) NOT NULL,
+    "movement_type" VARCHAR       NOT NULL,
+    "motive"        VARCHAR       NOT NULL,
+    "created_at"    TIMESTAMP     NOT NULL,
     FOREIGN KEY ("product_id") REFERENCES "Products" ("id")
 );
 
@@ -80,10 +91,34 @@ CREATE VIEW IF NOT EXISTS "Stock" AS
     FROM "Stock_Movements"
     GROUP BY product_id;
 
+CREATE SEQUENCE IF NOT EXISTS purchases_id_seq START 1;
+CREATE TABLE IF NOT EXISTS "Purchases" (
+    "id"         INTEGER       DEFAULT nextval('purchases_id_seq') PRIMARY KEY,
+    "freight"    DECIMAL(10,2) NOT NULL DEFAULT 0,
+    "total_cost" DECIMAL(10,2) NOT NULL DEFAULT 0,
+    "created_at" TIMESTAMP     NOT NULL
+);
+
+CREATE SEQUENCE IF NOT EXISTS purchase_items_id_seq START 1;
+CREATE TABLE IF NOT EXISTS "Purchase_Items" (
+    "id"            INTEGER       DEFAULT nextval('purchase_items_id_seq') PRIMARY KEY,
+    "purchase_id"   INTEGER       NOT NULL,
+    "product_id"    INTEGER       NOT NULL,
+    "quantity"      DECIMAL(10,4) NOT NULL,
+    "unit_cost"     DECIMAL(10,2) NOT NULL,
+    "box_qty"       DECIMAL(10,4),
+    "unit_qty"      DECIMAL(10,4),
+    "creates_stock" BOOLEAN       NOT NULL DEFAULT TRUE,
+    "created_at"    TIMESTAMP     NOT NULL,
+    FOREIGN KEY ("purchase_id") REFERENCES "Purchases" ("id"),
+    FOREIGN KEY ("product_id")  REFERENCES "Products"  ("id")
+);
+
 CREATE SEQUENCE IF NOT EXISTS sales_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Sales" (
     "id"          INTEGER       DEFAULT nextval('sales_id_seq') PRIMARY KEY,
     "user_id"     INTEGER       NOT NULL,
+    "status"      VARCHAR       NOT NULL DEFAULT 'open',
     "total_value" DECIMAL(10,2) NOT NULL DEFAULT 0,
     "updated_at"  TIMESTAMP     NOT NULL,
     "created_at"  TIMESTAMP     NOT NULL,
@@ -153,4 +188,26 @@ CREATE TABLE IF NOT EXISTS "Financial_Entries" (
     "updated_at"   TIMESTAMP     NOT NULL,
     "created_at"   TIMESTAMP     NOT NULL,
     FOREIGN KEY ("product_id") REFERENCES "Products" ("id")
+);
+
+CREATE SEQUENCE IF NOT EXISTS production_orders_id_seq START 1;
+CREATE TABLE IF NOT EXISTS "Production_Orders" (
+    "id"         INTEGER   DEFAULT nextval('production_orders_id_seq') PRIMARY KEY,
+    "sale_id"    INTEGER   NOT NULL,
+    "product_id" INTEGER   NOT NULL,
+    "quantity"   INTEGER   NOT NULL DEFAULT 1,
+    "created_at" TIMESTAMP NOT NULL,
+    FOREIGN KEY ("sale_id")    REFERENCES "Sales"    ("id"),
+    FOREIGN KEY ("product_id") REFERENCES "Products" ("id")
+);
+
+CREATE SEQUENCE IF NOT EXISTS production_inputs_id_seq START 1;
+CREATE TABLE IF NOT EXISTS "Production_Inputs" (
+    "id"                  INTEGER   DEFAULT nextval('production_inputs_id_seq') PRIMARY KEY,
+    "production_order_id" INTEGER       NOT NULL,
+    "product_id"          INTEGER       NOT NULL,
+    "quantity_used"       DECIMAL(10,4) NOT NULL,
+    "created_at"          TIMESTAMP     NOT NULL,
+    FOREIGN KEY ("production_order_id") REFERENCES "Production_Orders" ("id"),
+    FOREIGN KEY ("product_id")          REFERENCES "Products"          ("id")
 );
