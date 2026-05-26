@@ -3,9 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { Setup } from "./components/Setup";
 import { Login } from "./components/Login";
+import { CompanySetup } from "./components/CompanySetup";
 import { Dashboard } from "./components/Dashboard";
 
-type Screen = "loading" | "setup" | "login" | "dashboard";
+type Screen = "loading" | "setup" | "login" | "company-setup" | "dashboard";
 
 export type AuthUser = { id: number; name: string; nickname: string };
 
@@ -34,10 +35,20 @@ function App() {
   if (screen === "login") {
     return (
       <Login
-        onSuccess={(u) => {
+        onSuccess={async (u) => {
           setUser(u);
-          setScreen("dashboard");
+          const hasCompany = await invoke<boolean>("check_business_setup").catch(() => true);
+          setScreen(hasCompany ? "dashboard" : "company-setup");
         }}
+      />
+    );
+  }
+
+  if (screen === "company-setup") {
+    return (
+      <CompanySetup
+        user={user!}
+        onComplete={() => setScreen("dashboard")}
       />
     );
   }
