@@ -1,6 +1,8 @@
-import cashierIcon from "@/assets/cashier-svgrepo-com.svg";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect } from "react";
 import { type AuthUser } from "@/App";
+import { TabBar } from "./dashboard/TabBar";
+import { Launcher } from "./dashboard/Launcher";
+import { type Tab, type ModuleId } from "./dashboard/types";
 
 type Props = {
   user: AuthUser;
@@ -8,35 +10,83 @@ type Props = {
 };
 
 export function Dashboard({ user, onLogout }: Props) {
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeTab, setActiveTab] = useState<string | null>(null);
+
+  const openModule = (module: ModuleId) => {
+    const existing = tabs.find((t) => t.module === module);
+    if (existing) {
+      setActiveTab(existing.id);
+    } else {
+      const id = crypto.randomUUID();
+      setTabs((prev) => [...prev, { id, module }]);
+      setActiveTab(id);
+    }
+  };
+
+  const openNewInstance = (module: ModuleId) => {
+    const id = crypto.randomUUID();
+    setTabs((prev) => [...prev, { id, module }]);
+    setActiveTab(id);
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.ctrlKey) return;
+      if (e.key === "w") {
+        e.preventDefault();
+        if (activeTab) closeTab(activeTab);
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        if (tabs.length === 0) return;
+        const idx = tabs.findIndex((t) => t.id === activeTab);
+        const next = tabs[(idx + 1) % tabs.length];
+        setActiveTab(next.id);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [activeTab, tabs]);
+
+  const closeTab = (id: string) => {
+    setTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      const next = prev.filter((t) => t.id !== id);
+      if (activeTab === id) {
+        const fallback = next[idx - 1] ?? next[0] ?? null;
+        setActiveTab(fallback ? fallback.id : null);
+      }
+      return next;
+    });
+  };
+
   return (
     <div className="min-h-screen bg-teller-bg flex flex-col">
-      <header className="bg-teller-card border-b border-teller-border px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <img src={cashierIcon} alt="Teller" className="w-6 h-6 opacity-90" />
-          <span className="text-teller-text font-semibold tracking-tight">
-            Teller
-          </span>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <p className="text-teller-text text-xs font-medium leading-none">
-              {user.name}
+      <TabBar
+        tabs={tabs}
+        activeTab={activeTab}
+        user={user}
+        onHome={() => setActiveTab(null)}
+        onActivate={setActiveTab}
+        onClose={closeTab}
+        onDuplicate={openNewInstance}
+        onLogout={onLogout}
+      />
+      <main className="flex flex-1">
+        {activeTab === null ? (
+          <Launcher
+            userName={user.name}
+            onOpen={openModule}
+            onOpenNew={openNewInstance}
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-teller-muted text-sm">
+              {tabs.find((t) => t.id === activeTab)?.module}
             </p>
-            <p className="text-teller-muted text-xs mt-0.5">@{user.nickname}</p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onLogout}
-            className="border-teller-border text-teller-secondary hover:text-teller-text hover:bg-teller-hover cursor-pointer"
-          >
-            Sair
-          </Button>
-        </div>
-      </header>
-
-      <main className="flex-1 p-6" />
+        )}
+      </main>
     </div>
   );
 }
