@@ -4,6 +4,7 @@ import { TabBar } from "./dashboard/TabBar";
 import { Launcher } from "./dashboard/Launcher";
 import { Products } from "./products";
 import { type Tab, type ModuleId } from "./dashboard/types";
+import { useTheme } from "@/hooks/useTheme";
 
 type Props = {
   user: AuthUser;
@@ -13,6 +14,7 @@ type Props = {
 export function Dashboard({ user, onLogout }: Props) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
+  const { theme, setTheme } = useTheme(user);
 
   const openModule = (module: ModuleId) => {
     const existing = tabs.find((t) => t.module === module);
@@ -67,6 +69,8 @@ export function Dashboard({ user, onLogout }: Props) {
         tabs={tabs}
         activeTab={activeTab}
         user={user}
+        theme={theme}
+        onThemeChange={setTheme}
         onHome={() => setActiveTab(null)}
         onActivate={setActiveTab}
         onClose={closeTab}

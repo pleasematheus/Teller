@@ -6,6 +6,8 @@ import { Login } from "./components/Login";
 import { CompanySetup } from "./components/CompanySetup";
 import { Dashboard } from "./components/Dashboard";
 import { SplashScreen } from "./components/SplashScreen";
+import { applyTheme } from "./lib/theme";
+import { type Theme } from "./types/theme";
 
 type Screen = "loading" | "setup" | "login" | "company-setup" | "dashboard";
 
@@ -34,6 +36,14 @@ function App() {
     return (
       <Login
         onSuccess={async (u) => {
+          const saved = await invoke<string | null>("get_user_setting", {
+            userId: u.id,
+            key: "theme",
+          }).catch(() => null);
+          applyTheme(
+            (saved as Theme | null) ?? "system",
+            window.matchMedia("(prefers-color-scheme: dark)").matches
+          );
           setUser(u);
           const hasCompany = await invoke<boolean>("check_business_setup").catch(() => true);
           setScreen(hasCompany ? "dashboard" : "company-setup");
