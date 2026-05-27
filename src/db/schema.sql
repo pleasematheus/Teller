@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS "Products" (
     "cost_price"         DECIMAL(10,2) NOT NULL DEFAULT 0,
     "final_price"        DECIMAL(10,2) NOT NULL,
     "expected_loss_rate" DECIMAL(5,4)  NOT NULL DEFAULT 0,
+    "sellable"           BOOLEAN       NOT NULL DEFAULT TRUE,
     "updated_at"         TIMESTAMP     NOT NULL,
     "created_at"         TIMESTAMP     NOT NULL
 );
@@ -181,13 +182,15 @@ CREATE TABLE IF NOT EXISTS "Financial_Entries" (
     "description"  VARCHAR,
     "category"     VARCHAR       NOT NULL,
     "amount"       DECIMAL(10,2) NOT NULL,
-    "quantity"     INTEGER,
-    "unit_cost"    DECIMAL(10,4),
-    "product_id"   INTEGER,
-    "due_date"     DATE,
-    "is_recurring" BOOLEAN,
-    "updated_at"   TIMESTAMP     NOT NULL,
-    "created_at"   TIMESTAMP     NOT NULL,
+    "quantity"       INTEGER,
+    "unit_cost"      DECIMAL(10,4),
+    "product_id"     INTEGER,
+    "due_date"       DATE,
+    "is_recurring"   BOOLEAN,
+    "is_fixed"       BOOLEAN       NOT NULL DEFAULT FALSE,
+    "reference_date" DATE,
+    "updated_at"     TIMESTAMP     NOT NULL,
+    "created_at"     TIMESTAMP     NOT NULL,
     FOREIGN KEY ("product_id") REFERENCES "Products" ("id")
 );
 
