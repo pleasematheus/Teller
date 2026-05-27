@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { type AuthUser } from "@/App";
 import { TabBar } from "./dashboard/TabBar";
 import { Launcher } from "./dashboard/Launcher";
+import { Products } from "./products";
 import { type Tab, type ModuleId } from "./dashboard/types";
 
 type Props = {
@@ -80,10 +81,16 @@ export function Dashboard({ user, onLogout }: Props) {
             onOpenNew={openNewInstance}
           />
         ) : (
-          <div className="flex flex-1 items-center justify-center">
-            <p className="text-teller-muted text-sm">
-              {tabs.find((t) => t.id === activeTab)?.module}
-            </p>
+          <div className="flex flex-1">
+            {(() => {
+              const module = tabs.find((t) => t.id === activeTab)?.module;
+              if (module === "produtos") return <Products />;
+              return (
+                <div className="flex flex-1 items-center justify-center">
+                  <p className="text-teller-muted text-sm">{module}</p>
+                </div>
+              );
+            })()}
           </div>
         )}
       </main>
