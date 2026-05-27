@@ -3,6 +3,8 @@ import { type AuthUser } from "@/App";
 import { TabBar } from "./dashboard/TabBar";
 import { Launcher } from "./dashboard/Launcher";
 import { Products } from "./products";
+import { StockModule } from "./stock";
+import { PurchasesModule } from "./purchases";
 import { type Tab, type ModuleId } from "./dashboard/types";
 import { useTheme } from "@/hooks/useTheme";
 
@@ -89,6 +91,8 @@ export function Dashboard({ user, onLogout }: Props) {
             {(() => {
               const module = tabs.find((t) => t.id === activeTab)?.module;
               if (module === "produtos") return <Products />;
+              if (module === "estoque") return <StockModule />;
+              if (module === "compras") return <PurchasesModule />;
               return (
                 <div className="flex flex-1 items-center justify-center">
                   <p className="text-teller-muted text-sm">{module}</p>

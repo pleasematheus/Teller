@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS "Products" (
     "final_price"        DECIMAL(10,2) NOT NULL,
     "expected_loss_rate" DECIMAL(5,4)  NOT NULL DEFAULT 0,
     "sellable"           BOOLEAN       NOT NULL DEFAULT TRUE,
+    "unit"               VARCHAR       NOT NULL DEFAULT 'unidade' CHECK (unit IN ('unidade','rolo','bobina','ml','folha')),
     "updated_at"         TIMESTAMP     NOT NULL,
     "created_at"         TIMESTAMP     NOT NULL
 );

@@ -8,6 +8,7 @@ export interface Product {
   markup: number
   final_price: number
   expected_loss_rate: number
+  unit: string
 }
 
 export interface PricingRates {
