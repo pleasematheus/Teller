@@ -18,25 +18,25 @@
 
   --radius: 0.625rem;
 
-  /* Teller dark palette — always active */
-  --background:        #0f172a;
-  --foreground:        #f8fafc;
-  --card:              #1e293b;
-  --card-foreground:   #f8fafc;
-  --popover:           #1e293b;
-  --popover-foreground:#f8fafc;
+  /* Light palette */
+  --background:        #f8fafc;
+  --foreground:        #0f172a;
+  --card:              #ffffff;
+  --card-foreground:   #0f172a;
+  --popover:           #ffffff;
+  --popover-foreground:#0f172a;
   --primary:           #f59e0b;
   --primary-foreground:#0f172a;
-  --secondary:         #334155;
-  --secondary-foreground: #f8fafc;
-  --muted:             #334155;
-  --muted-foreground:  #94a3b8;
-  --accent:            #334155;
-  --accent-foreground: #f8fafc;
-  --destructive:       #ef4444;
-  --border:            #334155;
-  --input:             #334155;
-  --ring:              #fbbf24;
+  --secondary:         #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted:             #f1f5f9;
+  --muted-foreground:  #64748b;
+  --accent:            #f1f5f9;
+  --accent-foreground: #0f172a;
+  --destructive:       #dc2626;
+  --border:            #e2e8f0;
+  --input:             #e2e8f0;
+  --ring:              #f59e0b;
 
   --chart-1: #f59e0b;
   --chart-2: #3b82f6;
@@ -44,17 +44,33 @@
   --chart-4: #f97316;
   --chart-5: #ef4444;
 
-  --sidebar:                #1e293b;
-  --sidebar-foreground:     #f8fafc;
+  --sidebar:                #f1f5f9;
+  --sidebar-foreground:     #0f172a;
   --sidebar-primary:        #f59e0b;
   --sidebar-primary-foreground: #0f172a;
-  --sidebar-accent:         #334155;
-  --sidebar-accent-foreground: #f8fafc;
-  --sidebar-border:         #334155;
-  --sidebar-ring:           #fbbf24;
+  --sidebar-accent:         #e2e8f0;
+  --sidebar-accent-foreground: #0f172a;
+  --sidebar-border:         #e2e8f0;
+  --sidebar-ring:           #f59e0b;
+
+  /* Teller design tokens — light */
+  --teller-bg:           #f8fafc;
+  --teller-card:         #ffffff;
+  --teller-hover:        #f1f5f9;
+  --teller-active:       #e2e8f0;
+  --teller-text:         #0f172a;
+  --teller-secondary:    #475569;
+  --teller-muted:        #94a3b8;
+  --teller-accent:       #f59e0b;
+  --teller-accent-hover: #d97706;
+  --teller-accent-light: #fbbf24;
+  --teller-success:      #16a34a;
+  --teller-danger:       #dc2626;
+  --teller-info:         #2563eb;
+  --teller-border:       #e2e8f0;
+  --teller-focus:        #f59e0b;
 }
 
-/* Mirror dark vars so shadcn's .dark selector also picks up the palette */
 .dark {
   --background:        #0f172a;
   --foreground:        #f8fafc;
@@ -89,6 +105,23 @@
   --sidebar-accent-foreground: #f8fafc;
   --sidebar-border:         #334155;
   --sidebar-ring:           #fbbf24;
+
+  /* Teller design tokens — dark */
+  --teller-bg:           #0f172a;
+  --teller-card:         #1e293b;
+  --teller-hover:        #334155;
+  --teller-active:       #475569;
+  --teller-text:         #f8fafc;
+  --teller-secondary:    #94a3b8;
+  --teller-muted:        #64748b;
+  --teller-accent:       #f59e0b;
+  --teller-accent-hover: #d97706;
+  --teller-accent-light: #fbbf24;
+  --teller-success:      #22c55e;
+  --teller-danger:       #ef4444;
+  --teller-info:         #3b82f6;
+  --teller-border:       #334155;
+  --teller-focus:        #fbbf24;
 }
 
 @theme inline {
@@ -137,22 +170,22 @@
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 
-  /* Teller named tokens */
-  --color-teller-bg:           #0f172a;
-  --color-teller-card:         #1e293b;
-  --color-teller-hover:        #334155;
-  --color-teller-active:       #475569;
-  --color-teller-text:         #f8fafc;
-  --color-teller-secondary:    #94a3b8;
-  --color-teller-muted:        #64748b;
-  --color-teller-accent:       #f59e0b;
-  --color-teller-accent-hover: #d97706;
-  --color-teller-accent-light: #fbbf24;
-  --color-teller-success:      #22c55e;
-  --color-teller-danger:       #ef4444;
-  --color-teller-info:         #3b82f6;
-  --color-teller-border:       #334155;
-  --color-teller-focus:        #fbbf24;
+  /* Teller named tokens — dynamic via CSS custom properties */
+  --color-teller-bg:           var(--teller-bg);
+  --color-teller-card:         var(--teller-card);
+  --color-teller-hover:        var(--teller-hover);
+  --color-teller-active:       var(--teller-active);
+  --color-teller-text:         var(--teller-text);
+  --color-teller-secondary:    var(--teller-secondary);
+  --color-teller-muted:        var(--teller-muted);
+  --color-teller-accent:       var(--teller-accent);
+  --color-teller-accent-hover: var(--teller-accent-hover);
+  --color-teller-accent-light: var(--teller-accent-light);
+  --color-teller-success:      var(--teller-success);
+  --color-teller-danger:       var(--teller-danger);
+  --color-teller-info:         var(--teller-info);
+  --color-teller-border:       var(--teller-border);
+  --color-teller-focus:        var(--teller-focus);
 }
 
 @layer base {

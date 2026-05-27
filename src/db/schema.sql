@@ -215,3 +215,11 @@ CREATE TABLE IF NOT EXISTS "Production_Inputs" (
     FOREIGN KEY ("production_order_id") REFERENCES "Production_Orders" ("id"),
     FOREIGN KEY ("product_id")          REFERENCES "Products"          ("id")
 );
+
+CREATE TABLE IF NOT EXISTS "User_Settings" (
+    "user_id" INTEGER NOT NULL,
+    "key"     TEXT    NOT NULL,
+    "value"   TEXT    NOT NULL,
+    PRIMARY KEY ("user_id", "key"),
+    FOREIGN KEY ("user_id") REFERENCES "Users" ("id")
+);

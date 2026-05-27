@@ -17,11 +17,15 @@ import { Button } from "@/components/ui/button";
 import { type AuthUser } from "@/App";
 import { type Tab, type ModuleId } from "./types";
 import { MODULE_CONFIG } from "./ModuleCard";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { type Theme } from "@/types/theme";
 
 type Props = {
   tabs: Tab[];
   activeTab: string | null;
   user: AuthUser;
+  theme: Theme;
+  onThemeChange: (t: Theme) => void;
   onHome: () => void;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
@@ -37,6 +41,8 @@ export function TabBar({
   tabs,
   activeTab,
   user,
+  theme,
+  onThemeChange,
   onHome,
   onActivate,
   onClose,
@@ -122,12 +128,13 @@ export function TabBar({
           })}
         </div>
 
-        {/* User + logout */}
-        <div className="flex items-center gap-3 px-4 shrink-0 border-l border-teller-border">
+        {/* User + theme + logout */}
+        <div className="flex items-center gap-2 px-4 shrink-0 border-l border-teller-border">
           <div className="text-right leading-none">
             <p className="text-teller-text text-xs font-medium">{user.name}</p>
             <p className="text-teller-muted text-xs mt-0.5">@{user.nickname}</p>
           </div>
+          <ThemeToggle theme={theme} onThemeChange={onThemeChange} />
           <Button
             variant="outline"
             size="sm"

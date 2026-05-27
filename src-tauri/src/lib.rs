@@ -23,6 +23,19 @@ struct UserRow {
     active: bool,
 }
 
+fn ensure_user_settings_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"CREATE TABLE IF NOT EXISTS "User_Settings" (
+            "user_id" INTEGER NOT NULL,
+            "key"     TEXT    NOT NULL,
+            "value"   TEXT    NOT NULL,
+            PRIMARY KEY ("user_id", "key"),
+            FOREIGN KEY ("user_id") REFERENCES "Users" ("id")
+        )"#,
+    )
+    .map_err(|e| e.to_string())
+}
+
 fn init_schema(conn: &Connection) -> Result<(), String> {
     // execute_batch aborts DuckDB when objects already exist, even with IF NOT EXISTS.
     // Skip entirely if the schema was already initialized in a previous run.
@@ -78,6 +91,7 @@ fn lookup_user(conn: &Connection, identifier: &str) -> Result<Option<UserRow>, S
 fn check_setup(state: State<DbState>) -> Result<bool, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     init_schema(&conn)?;
+    ensure_user_settings_table(&conn)?;
     let count: i64 = conn
         .query_row(
             r#"SELECT COUNT(*) FROM "Users" WHERE active = true"#,
@@ -192,6 +206,46 @@ fn login(identifier: String, password: String, state: State<DbState>) -> Result<
     }
 
     Ok(User { id: row.id, name: row.name, nickname: row.nickname })
+}
+
+// ─── User Settings ───────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn get_user_setting(
+    user_id: i64,
+    key: String,
+    state: State<DbState>,
+) -> Result<Option<String>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(r#"SELECT value FROM "User_Settings" WHERE user_id = ? AND key = ?"#)
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt
+        .query_map(params![user_id, key], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    match rows.next() {
+        Some(Ok(value)) => Ok(Some(value)),
+        Some(Err(e)) => Err(e.to_string()),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+fn set_user_setting(
+    user_id: i64,
+    key: String,
+    value: String,
+    state: State<DbState>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        r#"INSERT INTO "User_Settings" (user_id, key, value)
+           VALUES (?, ?, ?)
+           ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value"#,
+        params![user_id, key, value],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ─── Products ────────────────────────────────────────────────────────────────
@@ -442,6 +496,8 @@ pub fn run() {
             create_business_settings,
             find_user,
             login,
+            get_user_setting,
+            set_user_setting,
             get_pricing_rates,
             get_product_loss_rate,
             list_products,
@@ -460,6 +516,7 @@ mod tests {
     fn test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
+        ensure_user_settings_table(&conn).unwrap();
         conn
     }
 
@@ -687,6 +744,70 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "Produto Novo");
+    }
+
+    // get_user_setting / set_user_setting
+
+    #[test]
+    fn get_user_setting_returns_none_when_absent() {
+        let conn = test_db();
+        insert_user(&conn, "Ana", "ana", true);
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" WHERE nickname = 'ana'"#, [], |r| r.get(0))
+            .unwrap();
+        let mut stmt = conn
+            .prepare(r#"SELECT value FROM "User_Settings" WHERE user_id = ? AND key = ?"#)
+            .unwrap();
+        let mut rows = stmt.query_map(params![user_id, "theme"], |r| r.get::<_, String>(0)).unwrap();
+        assert!(rows.next().is_none());
+    }
+
+    #[test]
+    fn set_user_setting_inserts_and_get_returns_value() {
+        let conn = test_db();
+        insert_user(&conn, "Ana", "ana", true);
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" WHERE nickname = 'ana'"#, [], |r| r.get(0))
+            .unwrap();
+        conn.execute(
+            r#"INSERT INTO "User_Settings" (user_id, key, value) VALUES (?, ?, ?)"#,
+            params![user_id, "theme", "dark"],
+        ).unwrap();
+        let value: String = conn
+            .query_row(
+                r#"SELECT value FROM "User_Settings" WHERE user_id = ? AND key = ?"#,
+                params![user_id, "theme"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "dark");
+    }
+
+    #[test]
+    fn set_user_setting_upserts_existing_value() {
+        let conn = test_db();
+        insert_user(&conn, "Ana", "ana", true);
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" WHERE nickname = 'ana'"#, [], |r| r.get(0))
+            .unwrap();
+        conn.execute(
+            r#"INSERT INTO "User_Settings" (user_id, key, value) VALUES (?, ?, ?)"#,
+            params![user_id, "theme", "dark"],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "User_Settings" (user_id, key, value)
+               VALUES (?, ?, ?)
+               ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value"#,
+            params![user_id, "theme", "light"],
+        ).unwrap();
+        let value: String = conn
+            .query_row(
+                r#"SELECT value FROM "User_Settings" WHERE user_id = ? AND key = ?"#,
+                params![user_id, "theme"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "light");
     }
 
     // get_pricing_rates logic
