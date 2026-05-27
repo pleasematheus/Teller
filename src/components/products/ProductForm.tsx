@@ -34,6 +34,7 @@ export function ProductForm({ open, product, rates, onClose, onSaved }: Props) {
   const [description, setDescription] = useState("")
   const [active, setActive] = useState(true)
   const [sellable, setSellable] = useState(true)
+  const [unit, setUnit] = useState("unidade")
   const [costPrice, setCostPrice] = useState("")
   const [lossRatePct, setLossRatePct] = useState("")
   const [lossMode, setLossMode] = useState<LossMode>("auto")
@@ -47,6 +48,7 @@ export function ProductForm({ open, product, rates, onClose, onSaved }: Props) {
       setDescription(product?.description ?? "")
       setActive(product?.active ?? true)
       setSellable(product?.sellable ?? true)
+      setUnit(product?.unit ?? "unidade")
       setCostPrice(product ? String(product.cost_price) : "")
       setLossRatePct(product ? String(product.expected_loss_rate * 100) : "0")
       setLossMode("manual")
@@ -85,6 +87,7 @@ export function ProductForm({ open, product, rates, onClose, onSaved }: Props) {
       description: description.trim() || null,
       active,
       sellable,
+      unit,
       costPrice: parsedCost,
       markup: breakdown.markup_percent,
       finalPrice: breakdown.final_price,
@@ -147,6 +150,23 @@ export function ProductForm({ open, product, rates, onClose, onSaved }: Props) {
               <Switch id="sellable" checked={sellable} onCheckedChange={setSellable} />
               <Label htmlFor="sellable">Vendável</Label>
             </div>
+          </div>
+
+          {/* Unit */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="unit">Unidade de medida</Label>
+            <select
+              id="unit"
+              value={unit}
+              onChange={(e) => setUnit(e.target.value)}
+              className="flex h-10 w-full rounded-md border border-teller-border bg-teller-card px-3 py-2 text-sm text-teller-text focus:outline-none focus:ring-2 focus:ring-teller-accent"
+            >
+              <option value="unidade">Unidade</option>
+              <option value="rolo">Rolo</option>
+              <option value="bobina">Bobina</option>
+              <option value="ml">ML</option>
+              <option value="folha">Folha</option>
+            </select>
           </div>
 
           {/* Cost */}

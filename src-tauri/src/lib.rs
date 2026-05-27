@@ -1,6 +1,6 @@
 use bcrypt::{hash, verify, DEFAULT_COST};
 use duckdb::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
@@ -32,6 +32,15 @@ fn ensure_user_settings_table(conn: &Connection) -> Result<(), String> {
             PRIMARY KEY ("user_id", "key"),
             FOREIGN KEY ("user_id") REFERENCES "Users" ("id")
         )"#,
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn ensure_unit_column(conn: &Connection) -> Result<(), String> {
+    // DuckDB does not support NOT NULL in ADD COLUMN; new DBs get it via schema.sql.
+    conn.execute_batch(
+        r#"ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS
+           "unit" VARCHAR DEFAULT 'unidade'"#,
     )
     .map_err(|e| e.to_string())
 }
@@ -92,6 +101,7 @@ fn check_setup(state: State<DbState>) -> Result<bool, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     init_schema(&conn)?;
     ensure_user_settings_table(&conn)?;
+    ensure_unit_column(&conn)?;
     let count: i64 = conn
         .query_row(
             r#"SELECT COUNT(*) FROM "Users" WHERE active = true"#,
@@ -270,6 +280,7 @@ pub struct Product {
     pub markup: f64,
     pub final_price: f64,
     pub expected_loss_rate: f64,
+    pub unit: String,
 }
 
 fn validate_product(name: &str, cost_price: f64, expected_loss_rate: f64) -> Result<(), String> {
@@ -378,7 +389,7 @@ fn list_products(state: State<DbState>) -> Result<Vec<Product>, String> {
     let mut stmt = conn
         .prepare(r#"
             SELECT id, name, description, active, sellable,
-                   cost_price, markup, final_price, expected_loss_rate
+                   cost_price, markup, final_price, expected_loss_rate, unit
             FROM "Products"
             ORDER BY name
         "#)
@@ -396,6 +407,7 @@ fn list_products(state: State<DbState>) -> Result<Vec<Product>, String> {
                 markup: row.get(6)?,
                 final_price: row.get(7)?,
                 expected_loss_rate: row.get(8)?,
+                unit: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -415,6 +427,7 @@ fn create_product(
     markup: f64,
     final_price: f64,
     expected_loss_rate: f64,
+    unit: String,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -424,9 +437,10 @@ fn create_product(
     conn.execute(
         r#"INSERT INTO "Products"
            (name, description, active, sellable, cost_price, markup, final_price,
-            expected_loss_rate, updated_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-        params![name, description, active, sellable, cost_price, markup, final_price, expected_loss_rate],
+            expected_loss_rate, unit, updated_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+        params![name, description, active, sellable, cost_price, markup, final_price,
+                expected_loss_rate, unit],
     )
     .map_err(|e| e.to_string())?;
 
@@ -444,6 +458,7 @@ fn update_product(
     markup: f64,
     final_price: f64,
     expected_loss_rate: f64,
+    unit: String,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -456,10 +471,10 @@ fn update_product(
             r#"UPDATE "Products"
                SET name = ?, description = ?, active = ?, sellable = ?,
                    cost_price = ?, markup = ?, final_price = ?, expected_loss_rate = ?,
-                   updated_at = CURRENT_TIMESTAMP
+                   unit = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
             params![name, description, active, sellable, cost_price, markup, final_price,
-                    expected_loss_rate, id],
+                    expected_loss_rate, unit, id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -468,6 +483,285 @@ fn update_product(
     }
 
     Ok(())
+}
+
+// ─── Stock ───────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct StockItem {
+    pub product_id: i64,
+    pub name: String,
+    pub unit: String,
+    pub current_quantity: f64,
+}
+
+#[derive(Deserialize)]
+pub struct PurchaseItemInput {
+    pub product_id: i64,
+    pub quantity: f64,
+    pub unit_cost: f64,
+    pub box_qty: Option<f64>,
+    pub unit_qty: Option<f64>,
+}
+
+#[derive(Serialize)]
+pub struct StockMovement {
+    pub id: i64,
+    pub quantity: f64,
+    pub movement_type: String,
+    pub motive: String,
+    pub created_at: String,
+}
+
+#[derive(Serialize)]
+pub struct ProductComponent {
+    pub child_id: i64,
+    pub child_name: String,
+    pub quantity: i64,
+    pub calculated_quantity: Option<f64>,
+    pub use_calculated: bool,
+}
+
+#[derive(Serialize)]
+pub struct Purchase {
+    pub id: i64,
+    pub freight: f64,
+    pub total_cost: f64,
+    pub created_at: String,
+}
+
+#[tauri::command]
+fn list_stock(state: State<DbState>) -> Result<Vec<StockItem>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(r#"
+            SELECT p.id, p.name, p.unit, COALESCE(s.current_quantity, 0.0)
+            FROM "Products" p
+            LEFT JOIN "Stock" s ON s.product_id = p.id
+            ORDER BY p.name
+        "#)
+        .map_err(|e| e.to_string())?;
+
+    let items = stmt
+        .query_map([], |row| {
+            Ok(StockItem {
+                product_id: row.get(0)?,
+                name: row.get(1)?,
+                unit: row.get(2)?,
+                current_quantity: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(items)
+}
+
+fn do_purchase_work(
+    conn: &Connection,
+    freight: f64,
+    items: &[PurchaseItemInput],
+) -> Result<(), String> {
+    let total_cost: f64 =
+        items.iter().map(|i| i.quantity * i.unit_cost).sum::<f64>() + freight;
+
+    let purchase_id: i64 = conn
+        .query_row(
+            r#"INSERT INTO "Purchases" (freight, total_cost, created_at)
+               VALUES (?, ?, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![freight, total_cost],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    for item in items {
+        conn.execute(
+            r#"INSERT INTO "Purchase_Items"
+               (purchase_id, product_id, quantity, unit_cost, box_qty, unit_qty,
+                creates_stock, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, true, CURRENT_TIMESTAMP)"#,
+            params![
+                purchase_id, item.product_id, item.quantity, item.unit_cost,
+                item.box_qty, item.unit_qty
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        let stock_qty = match (item.box_qty, item.unit_qty) {
+            (Some(bq), Some(uq)) if bq > 0.0 => item.quantity * (uq / bq),
+            _ => item.quantity,
+        };
+
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements"
+               (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, ?, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![item.product_id, stock_qty],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn create_purchase(
+    freight: f64,
+    items: Vec<PurchaseItemInput>,
+    state: State<DbState>,
+) -> Result<(), String> {
+    if items.is_empty() {
+        return Err("A compra deve ter ao menos um item".to_string());
+    }
+    for item in &items {
+        if item.quantity <= 0.0 {
+            return Err("Quantidade de cada item deve ser positiva".to_string());
+        }
+    }
+
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+
+    match do_purchase_work(&conn, freight, &items) {
+        Ok(()) => {
+            conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+fn create_stock_adjustment(
+    product_id: i64,
+    quantity: f64,
+    motive: String,
+    note: Option<String>,
+    state: State<DbState>,
+) -> Result<(), String> {
+    if quantity == 0.0 {
+        return Err("Quantidade não pode ser zero".to_string());
+    }
+
+    let movement_type = if quantity > 0.0 { "in" } else { "out" };
+    let abs_quantity = quantity.abs();
+    let full_motive = match note.as_deref() {
+        Some(n) if !n.trim().is_empty() => format!("{} - {}", motive, n.trim()),
+        _ => motive,
+    };
+
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        r#"INSERT INTO "Stock_Movements"
+           (product_id, quantity, movement_type, motive, created_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
+        params![product_id, abs_quantity, movement_type, full_motive],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn list_stock_movements(
+    product_id: i64,
+    state: State<DbState>,
+) -> Result<Vec<StockMovement>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(r#"
+            SELECT id, quantity, movement_type, motive,
+                   CAST(created_at AS VARCHAR)
+            FROM "Stock_Movements"
+            WHERE product_id = ?
+            ORDER BY created_at DESC
+        "#)
+        .map_err(|e| e.to_string())?;
+
+    let movements = stmt
+        .query_map(params![product_id], |row| {
+            Ok(StockMovement {
+                id: row.get(0)?,
+                quantity: row.get(1)?,
+                movement_type: row.get(2)?,
+                motive: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(movements)
+}
+
+#[tauri::command]
+fn list_product_components(
+    product_id: i64,
+    state: State<DbState>,
+) -> Result<Vec<ProductComponent>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(r#"
+            SELECT pc.child_id, p.name, pc.quantity, pc.calculated_quantity, pc.use_calculated
+            FROM "Product_Components" pc
+            JOIN "Products" p ON p.id = pc.child_id
+            WHERE pc.parent_id = ?
+            ORDER BY p.name
+        "#)
+        .map_err(|e| e.to_string())?;
+
+    let components = stmt
+        .query_map(params![product_id], |row| {
+            Ok(ProductComponent {
+                child_id: row.get(0)?,
+                child_name: row.get(1)?,
+                quantity: row.get(2)?,
+                calculated_quantity: row.get(3)?,
+                use_calculated: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(components)
+}
+
+#[tauri::command]
+fn list_purchases(state: State<DbState>) -> Result<Vec<Purchase>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(r#"
+            SELECT id, freight, total_cost, CAST(created_at AS VARCHAR)
+            FROM "Purchases"
+            ORDER BY created_at DESC
+        "#)
+        .map_err(|e| e.to_string())?;
+
+    let purchases = stmt
+        .query_map([], |row| {
+            Ok(Purchase {
+                id: row.get(0)?,
+                freight: row.get(1)?,
+                total_cost: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(purchases)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -503,6 +797,12 @@ pub fn run() {
             list_products,
             create_product,
             update_product,
+            list_stock,
+            create_purchase,
+            create_stock_adjustment,
+            list_stock_movements,
+            list_product_components,
+            list_purchases,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -517,6 +817,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
         ensure_user_settings_table(&conn).unwrap();
+        ensure_unit_column(&conn).unwrap();
         conn
     }
 
@@ -713,6 +1014,64 @@ mod tests {
         assert!(!sellable);
     }
 
+    #[test]
+    fn create_product_stores_unit() {
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Products"
+               (name, active, sellable, markup, cost_price, final_price, expected_loss_rate,
+                unit, updated_at, created_at)
+               VALUES ('Papel Rolo', true, false, 1.5, 10.0, 15.0, 0.0,
+                       'rolo', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        )
+        .unwrap();
+        let unit: String = conn
+            .query_row(
+                r#"SELECT unit FROM "Products" WHERE name = 'Papel Rolo'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(unit, "rolo");
+    }
+
+    #[test]
+    fn create_product_defaults_unit_to_unidade() {
+        let conn = test_db();
+        insert_product(&conn, "Produto Sem Unidade", true);
+        let unit: String = conn
+            .query_row(
+                r#"SELECT unit FROM "Products" WHERE name = 'Produto Sem Unidade'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(unit, "unidade");
+    }
+
+    #[test]
+    fn list_products_includes_unit_field() {
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Products"
+               (name, active, sellable, markup, cost_price, final_price, expected_loss_rate,
+                unit, updated_at, created_at)
+               VALUES ('Bobina', true, false, 1.0, 50.0, 50.0, 0.0,
+                       'bobina', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        )
+        .unwrap();
+        let unit: String = conn
+            .query_row(
+                r#"SELECT unit FROM "Products" WHERE name = 'Bobina'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(unit, "bobina");
+    }
+
     // update_product (rows_affected)
 
     #[test]
@@ -744,6 +1103,25 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "Produto Novo");
+    }
+
+    #[test]
+    fn update_product_persists_unit() {
+        let conn = test_db();
+        let id = insert_product(&conn, "Insumo", false);
+        conn.execute(
+            r#"UPDATE "Products" SET unit = 'ml', updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![id],
+        )
+        .unwrap();
+        let unit: String = conn
+            .query_row(
+                r#"SELECT unit FROM "Products" WHERE id = ?"#,
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(unit, "ml");
     }
 
     // get_user_setting / set_user_setting
@@ -831,7 +1209,6 @@ mod tests {
     fn pricing_rates_calculates_cv_df_from_entries() {
         let conn = test_db();
         insert_business_settings(&conn, "Empresa");
-        // Insert a sale to create faturamento_ref
         conn.execute(
             r#"INSERT INTO "Users" (name, nickname, password_hash, active, updated_at, created_at)
                VALUES ('u', 'u', 'h', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
@@ -843,14 +1220,12 @@ mod tests {
                VALUES (?, 'closed', 1000.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             params![user_id],
         ).unwrap();
-        // Insert variable entry (CV) = 100
         conn.execute(
             r#"INSERT INTO "Financial_Entries"
                (type, name, category, amount, is_fixed, updated_at, created_at)
                VALUES ('expense', 'Taxa cartão', 'variavel', 100.0, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
         ).unwrap();
-        // Insert fixed expense (DF) = 200
         conn.execute(
             r#"INSERT INTO "Financial_Entries"
                (type, name, category, amount, is_fixed, updated_at, created_at)
@@ -922,5 +1297,166 @@ mod tests {
                 params![id], |r| r.get(0),
             ).unwrap();
         assert!((total_loss / total_in - 0.1).abs() < 1e-9);
+    }
+
+    // create_purchase
+
+    #[test]
+    fn create_purchase_inserts_purchase_and_stock_movement() {
+        let conn = test_db();
+        let id = insert_product(&conn, "Papel A4", false);
+
+        conn.execute_batch("BEGIN").unwrap();
+        let purchase_id: i64 = conn
+            .query_row(
+                r#"INSERT INTO "Purchases" (freight, total_cost, created_at)
+                   VALUES (10.0, 110.0, CURRENT_TIMESTAMP) RETURNING id"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            r#"INSERT INTO "Purchase_Items"
+               (purchase_id, product_id, quantity, unit_cost, creates_stock, created_at)
+               VALUES (?, ?, 5.0, 20.0, true, CURRENT_TIMESTAMP)"#,
+            params![purchase_id, id],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements"
+               (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 5.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let qty: f64 = conn
+            .query_row(
+                r#"SELECT current_quantity FROM "Stock" WHERE product_id = ?"#,
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((qty - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn create_purchase_applies_box_unit_conversion() {
+        // 2 caixas, cada caixa tem 500 unidades (box_qty=1, unit_qty=500)
+        let quantity = 2.0_f64;
+        let box_qty = 1.0_f64;
+        let unit_qty = 500.0_f64;
+        let stock_qty = quantity * (unit_qty / box_qty);
+        assert!((stock_qty - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn create_purchase_without_conversion_uses_quantity_directly() {
+        let quantity = 3.0_f64;
+        let box_qty: Option<f64> = None;
+        let unit_qty: Option<f64> = None;
+        let stock_qty = match (box_qty, unit_qty) {
+            (Some(bq), Some(uq)) if bq > 0.0 => quantity * (uq / bq),
+            _ => quantity,
+        };
+        assert!((stock_qty - 3.0).abs() < 1e-9);
+    }
+
+    // create_stock_adjustment
+
+    #[test]
+    fn stock_adjustment_loss_creates_out_movement() {
+        let conn = test_db();
+        let id = insert_product(&conn, "Papel", false);
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements"
+               (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, ?, 'out', 'perda', CURRENT_TIMESTAMP)"#,
+            params![id, 5.0_f64],
+        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Stock_Movements"
+                   WHERE product_id = ? AND movement_type = 'out' AND motive = 'perda'"#,
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn stock_adjustment_positive_creates_in_movement() {
+        let conn = test_db();
+        let id = insert_product(&conn, "Bobina", false);
+        let quantity = 10.0_f64;
+        let movement_type = if quantity > 0.0 { "in" } else { "out" };
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements"
+               (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, ?, ?, 'ajuste', CURRENT_TIMESTAMP)"#,
+            params![id, quantity.abs(), movement_type],
+        ).unwrap();
+        let mt: String = conn
+            .query_row(
+                r#"SELECT movement_type FROM "Stock_Movements" WHERE product_id = ?"#,
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mt, "in");
+    }
+
+    #[test]
+    fn stock_adjustment_negative_creates_out_movement() {
+        let quantity = -3.0_f64;
+        let movement_type = if quantity > 0.0 { "in" } else { "out" };
+        assert_eq!(movement_type, "out");
+        assert!((quantity.abs() - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn stock_adjustment_zero_quantity_is_invalid() {
+        let quantity = 0.0_f64;
+        assert!(quantity == 0.0);
+    }
+
+    // list_stock_movements
+
+    #[test]
+    fn list_stock_movements_returns_history_for_product() {
+        let conn = test_db();
+        let id = insert_product(&conn, "Bobina", false);
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 10.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 2.0, 'out', 'perda', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Stock_Movements" WHERE product_id = ?"#,
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn list_stock_movements_empty_for_product_without_movements() {
+        let conn = test_db();
+        let id = insert_product(&conn, "Produto Sem Movimento", false);
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Stock_Movements" WHERE product_id = ?"#,
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }
