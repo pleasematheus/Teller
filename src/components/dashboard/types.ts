@@ -1,7 +1,7 @@
 export type ModuleId =
   | "estoque"
   | "compras"
-  | "producao"
+  | "relatorios"
   | "vendas"
   | "produtos"
   | "configuracoes";

@@ -27,7 +27,7 @@ O sistema SHALL exibir uma tela lançador como estado inicial do Dashboard, com 
 
 #### Scenario: Exibição do lançador ao entrar no Dashboard
 - **WHEN** o usuário acessa o Dashboard após autenticação bem-sucedida
-- **THEN** o lançador é exibido com a saudação "Olá, [nome]" e os cards dos módulos: Estoque, Compras, Produção, Vendas, Produtos e Configurações
+- **THEN** o lançador é exibido com a saudação "Olá, [nome]" e os cards dos módulos: Estoque, Compras, Relatórios, Vendas, Produtos e Configurações
 
 #### Scenario: Retorno ao lançador pelo ícone home
 - **WHEN** o usuário clica no ícone [🏠] na barra de abas
