@@ -6,6 +6,7 @@ import {
   Store01Icon,
   Tag01Icon,
   Settings01Icon,
+  Wallet01Icon,
 } from "@hugeicons/core-free-icons";
 import {
   ContextMenu,
@@ -28,6 +29,7 @@ export const MODULE_CONFIG: ModuleConfig[] = [
   { id: "vendas", label: "Vendas", icon: Store01Icon },
   { id: "produtos", label: "Produtos", icon: Tag01Icon },
   { id: "configuracoes", label: "Configurações", icon: Settings01Icon },
+  { id: "financeiro", label: "Financeiro", icon: Wallet01Icon },
 ];
 
 type Props = {
