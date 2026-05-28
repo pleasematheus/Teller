@@ -23,11 +23,13 @@ export function SaleCloseSheet({ open, sale, onClose, onClosed }: Props) {
   const [methods, setMethods] = useState<PaymentMethod[]>([])
   const [payments, setPayments] = useState<PaymentLine[]>([{ methodId: 0, amount: "" }])
   const [error, setError] = useState<string | null>(null)
+  const [warnings, setWarnings] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setError(null)
+    setWarnings([])
     setPayments([{ methodId: 0, amount: "" }])
     invoke<PaymentMethod[]>("list_payment_methods")
       .then((ms) => {
@@ -68,9 +70,13 @@ export function SaleCloseSheet({ open, sale, onClose, onClosed }: Props) {
         payment_method_id: p.methodId,
         amount_paid: parseFloat(p.amount) || 0,
       }))
-      await invoke("close_sale", { id: sale.id, payments: paymentInputs })
+      const stockWarnings = await invoke<string[]>("close_sale", { id: sale.id, payments: paymentInputs })
       onClosed()
-      onClose()
+      if (stockWarnings.length > 0) {
+        setWarnings(stockWarnings)
+      } else {
+        onClose()
+      }
     } catch (err) {
       setError(String(err))
     } finally {
@@ -153,13 +159,26 @@ export function SaleCloseSheet({ open, sale, onClose, onClosed }: Props) {
 
           {error && <p className="text-sm text-red-500">{error}</p>}
 
+          {warnings.length > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 flex flex-col gap-2">
+              <p className="text-sm font-medium text-amber-600">Estoque insuficiente</p>
+              <ul className="flex flex-col gap-1">
+                {warnings.map((w, i) => (
+                  <li key={i} className="text-xs text-amber-600">{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="flex gap-3 pt-2">
             <Button type="button" variant="outline" onClick={onClose} className="flex-1">
-              Cancelar
+              {warnings.length > 0 ? "Fechar" : "Cancelar"}
             </Button>
-            <Button onClick={handleSubmit} disabled={!canSubmit || submitting} className="flex-1">
-              {submitting ? "Fechando..." : "Confirmar pagamento"}
-            </Button>
+            {warnings.length === 0 && (
+              <Button onClick={handleSubmit} disabled={!canSubmit || submitting} className="flex-1">
+                {submitting ? "Fechando..." : "Confirmar pagamento"}
+              </Button>
+            )}
           </div>
         </div>
       </SheetContent>

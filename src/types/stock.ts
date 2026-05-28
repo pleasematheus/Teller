@@ -14,9 +14,11 @@ export interface StockMovement {
 }
 
 export interface ProductComponent {
+  id: number
   child_id: number
   child_name: string
   quantity: number
+  unit: string
   calculated_quantity: number | null
   use_calculated: boolean
 }
