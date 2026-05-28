@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { type AuthUser } from "@/App";
@@ -15,6 +16,8 @@ export function Login({ onSuccess }: Props) {
   const [lookupError, setLookupError] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const handleClose = () => getCurrentWindow().close();
 
   const handleIdentifierBlur = async () => {
     if (!identifier.trim()) {
@@ -126,6 +129,14 @@ export function Login({ onSuccess }: Props) {
               {loading ? "Entrando..." : "Entrar"}
             </Button>
           </form>
+
+          <Button
+            type="button"
+            onClick={handleClose}
+            className="h-9 w-full mt-3 bg-transparent border border-teller-border text-teller-secondary hover:text-teller-text hover:bg-teller-bg text-sm cursor-pointer"
+          >
+            Fechar
+          </Button>
         </div>
       </div>
     </div>
