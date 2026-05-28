@@ -562,9 +562,11 @@ pub struct StockMovement {
 
 #[derive(Serialize)]
 pub struct ProductComponent {
+    pub id: i64,
     pub child_id: i64,
     pub child_name: String,
     pub quantity: i64,
+    pub unit: String,
     pub calculated_quantity: Option<f64>,
     pub use_calculated: bool,
 }
@@ -758,7 +760,7 @@ fn list_product_components(
 
     let mut stmt = conn
         .prepare(r#"
-            SELECT pc.child_id, p.name, pc.quantity, pc.calculated_quantity, pc.use_calculated
+            SELECT pc.id, pc.child_id, p.name, pc.quantity, p.unit, pc.calculated_quantity, pc.use_calculated
             FROM "Product_Components" pc
             JOIN "Products" p ON p.id = pc.child_id
             WHERE pc.parent_id = ?
@@ -769,11 +771,13 @@ fn list_product_components(
     let components = stmt
         .query_map(params![product_id], |row| {
             Ok(ProductComponent {
-                child_id: row.get(0)?,
-                child_name: row.get(1)?,
-                quantity: row.get(2)?,
-                calculated_quantity: row.get(3)?,
-                use_calculated: row.get(4)?,
+                id: row.get(0)?,
+                child_id: row.get(1)?,
+                child_name: row.get(2)?,
+                quantity: row.get(3)?,
+                unit: row.get(4)?,
+                calculated_quantity: row.get(5)?,
+                use_calculated: row.get(6)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -781,6 +785,111 @@ fn list_product_components(
         .map_err(|e| e.to_string())?;
 
     Ok(components)
+}
+
+#[tauri::command]
+fn add_product_component(
+    parent_id: i64,
+    child_id: i64,
+    quantity: i64,
+    state: State<DbState>,
+) -> Result<(), String> {
+    if parent_id == child_id {
+        return Err("Um produto não pode ser componente de si mesmo".to_string());
+    }
+    if quantity <= 0 {
+        return Err("Quantidade deve ser maior que zero".to_string());
+    }
+
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let parent_sellable: bool = conn
+        .query_row(
+            r#"SELECT sellable FROM "Products" WHERE id = ?"#,
+            params![parent_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| format!("Produto {} não encontrado", parent_id))?;
+
+    if !parent_sellable {
+        return Err("Apenas produtos vendáveis podem ter componentes".to_string());
+    }
+
+    let child_sellable: bool = conn
+        .query_row(
+            r#"SELECT sellable FROM "Products" WHERE id = ?"#,
+            params![child_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| format!("Componente {} não encontrado", child_id))?;
+
+    if child_sellable {
+        return Err("Componentes devem ser insumos (não vendáveis)".to_string());
+    }
+
+    let count: i64 = conn
+        .query_row(
+            r#"SELECT COUNT(*) FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
+            params![parent_id, child_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if count > 0 {
+        return Err("Este insumo já está cadastrado na ficha técnica deste produto".to_string());
+    }
+
+    conn.execute(
+        r#"INSERT INTO "Product_Components"
+           (parent_id, child_id, quantity, updated_at, created_at)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+        params![parent_id, child_id, quantity],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn remove_product_component(id: i64, state: State<DbState>) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let rows = conn
+        .execute(
+            r#"DELETE FROM "Product_Components" WHERE id = ?"#,
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if rows == 0 {
+        return Err(format!("Componente {} não encontrado", id));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn update_product_component(id: i64, quantity: i64, state: State<DbState>) -> Result<(), String> {
+    if quantity <= 0 {
+        return Err("Quantidade deve ser maior que zero".to_string());
+    }
+
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let rows = conn
+        .execute(
+            r#"UPDATE "Product_Components"
+               SET quantity = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?"#,
+            params![quantity, id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if rows == 0 {
+        return Err(format!("Componente {} não encontrado", id));
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1037,7 +1146,7 @@ fn do_close_sale_work(
     conn: &Connection,
     sale_id: i64,
     payments: &[SalePaymentInput],
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let (status, total_value): (String, f64) = conn
         .query_row(
             r#"SELECT status, total_value FROM "Sales" WHERE id = ?"#,
@@ -1097,15 +1206,66 @@ fn do_close_sale_work(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
+    let mut warnings: Vec<String> = Vec::new();
+
     for (product_id, quantity, sellable) in items {
         if sellable {
-            conn.execute(
-                r#"INSERT INTO "Production_Orders"
-                   (sale_id, product_id, quantity, created_at)
-                   VALUES (?, ?, ?, CURRENT_TIMESTAMP)"#,
-                params![sale_id, product_id, quantity],
-            )
-            .map_err(|e| e.to_string())?;
+            let order_id: i64 = conn
+                .query_row(
+                    r#"INSERT INTO "Production_Orders"
+                       (sale_id, product_id, quantity, created_at)
+                       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                       RETURNING id"#,
+                    params![sale_id, product_id, quantity],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+
+            let mut comp_stmt = conn
+                .prepare(r#"
+                    SELECT pc.child_id, pc.quantity, p.name,
+                           COALESCE(s.current_quantity, 0.0)
+                    FROM "Product_Components" pc
+                    JOIN "Products" p ON p.id = pc.child_id
+                    LEFT JOIN "Stock" s ON s.product_id = pc.child_id
+                    WHERE pc.parent_id = ?
+                "#)
+                .map_err(|e| e.to_string())?;
+
+            let components: Vec<(i64, i64, String, f64)> = comp_stmt
+                .query_map(params![product_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+
+            for (child_id, comp_qty, child_name, current_stock) in components {
+                let qty_to_consume = comp_qty as f64 * quantity as f64;
+
+                if current_stock < qty_to_consume {
+                    warnings.push(format!(
+                        "Estoque insuficiente de '{}': disponível {:.2}, necessário {:.2}",
+                        child_name, current_stock, qty_to_consume
+                    ));
+                }
+
+                conn.execute(
+                    r#"INSERT INTO "Stock_Movements"
+                       (product_id, quantity, movement_type, motive, created_at)
+                       VALUES (?, ?, 'out', 'venda', CURRENT_TIMESTAMP)"#,
+                    params![child_id, qty_to_consume],
+                )
+                .map_err(|e| e.to_string())?;
+
+                conn.execute(
+                    r#"INSERT INTO "Production_Inputs"
+                       (production_order_id, product_id, quantity_used, created_at)
+                       VALUES (?, ?, ?, CURRENT_TIMESTAMP)"#,
+                    params![order_id, child_id, qty_to_consume],
+                )
+                .map_err(|e| e.to_string())?;
+            }
         }
     }
 
@@ -1115,7 +1275,7 @@ fn do_close_sale_work(
     )
     .map_err(|e| e.to_string())?;
 
-    Ok(())
+    Ok(warnings)
 }
 
 #[tauri::command]
@@ -1123,7 +1283,7 @@ fn close_sale(
     id: i64,
     payments: Vec<SalePaymentInput>,
     state: State<DbState>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     if payments.is_empty() {
         return Err("Informe ao menos um pagamento".to_string());
     }
@@ -1132,9 +1292,9 @@ fn close_sale(
     conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
 
     match do_close_sale_work(&conn, id, &payments) {
-        Ok(()) => {
+        Ok(warnings) => {
             conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
-            Ok(())
+            Ok(warnings)
         }
         Err(e) => {
             let _ = conn.execute_batch("ROLLBACK");
@@ -1254,6 +1414,9 @@ pub fn run() {
             create_stock_adjustment,
             list_stock_movements,
             list_product_components,
+            add_product_component,
+            remove_product_component,
+            update_product_component,
             list_purchases,
             list_sales,
             create_sale,
@@ -2104,5 +2267,291 @@ mod tests {
             .query_row(r#"SELECT status FROM "Sales" WHERE id = ?"#, params![sale_id], |r| r.get(0))
             .unwrap();
         assert_eq!(status, "closed");
+    }
+
+    // add_product_component
+
+    #[test]
+    fn add_product_component_valid_inserts_record() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Foto 10x15", true);
+        let child_id = insert_product(&conn, "Papel Fotográfico", false);
+        add_product_component_in_test(&conn, parent_id, child_id, 1);
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
+                params![parent_id, child_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn add_product_component_rejects_non_sellable_parent() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Papel", false);
+        let child_id = insert_product(&conn, "Tinta", false);
+        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("vendáveis"));
+    }
+
+    #[test]
+    fn add_product_component_rejects_sellable_child() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Foto 10x15", true);
+        let child_id = insert_product(&conn, "Outro Produto", true);
+        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("insumos"));
+    }
+
+    #[test]
+    fn add_product_component_rejects_self_reference() {
+        let conn = test_db();
+        let id = insert_product(&conn, "Foto 10x15", true);
+        let result = add_product_component_in_test_result(&conn, id, id, 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("si mesmo"));
+    }
+
+    #[test]
+    fn add_product_component_rejects_zero_quantity() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Foto", true);
+        let child_id = insert_product(&conn, "Papel", false);
+        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Quantidade"));
+    }
+
+    #[test]
+    fn add_product_component_rejects_duplicate() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Foto", true);
+        let child_id = insert_product(&conn, "Papel", false);
+        add_product_component_in_test(&conn, parent_id, child_id, 1);
+        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn remove_product_component_deletes_record() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Foto", true);
+        let child_id = insert_product(&conn, "Papel", false);
+        add_product_component_in_test(&conn, parent_id, child_id, 1);
+        let comp_id: i64 = conn
+            .query_row(
+                r#"SELECT id FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
+                params![parent_id, child_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let rows = conn
+            .execute(r#"DELETE FROM "Product_Components" WHERE id = ?"#, params![comp_id])
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn remove_product_component_nonexistent_returns_zero_rows() {
+        let conn = test_db();
+        let rows = conn
+            .execute(r#"DELETE FROM "Product_Components" WHERE id = ?"#, params![99999_i64])
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn update_product_component_changes_quantity() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Foto", true);
+        let child_id = insert_product(&conn, "Papel", false);
+        add_product_component_in_test(&conn, parent_id, child_id, 1);
+        let comp_id: i64 = conn
+            .query_row(
+                r#"SELECT id FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
+                params![parent_id, child_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            r#"UPDATE "Product_Components" SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![5_i64, comp_id],
+        )
+        .unwrap();
+        let qty: i64 = conn
+            .query_row(
+                r#"SELECT quantity FROM "Product_Components" WHERE id = ?"#,
+                params![comp_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(qty, 5);
+    }
+
+    // close_sale with stock consumption
+
+    #[test]
+    fn close_sale_consumes_stock_for_components() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let foto_id = insert_product(&conn, "Foto 10x15", true);
+        let papel_id = insert_product(&conn, "Papel", false);
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+
+        // Add stock for papel: 100 units
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 100.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![papel_id],
+        ).unwrap();
+
+        // Ficha técnica: 1 foto = 2 folhas de papel
+        add_product_component_in_test(&conn, foto_id, papel_id, 2);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 30.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id],
+            |r| r.get(0),
+        ).unwrap();
+        // Sale: 3 fotos
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 3, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, foto_id],
+        ).unwrap();
+
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0 }];
+        conn.execute_batch("BEGIN").unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        assert!(warnings.is_empty(), "Não deveria haver avisos com estoque suficiente");
+
+        // Stock consumed: 3 fotos × 2 folhas = 6 folhas out
+        let consumed: f64 = conn.query_row(
+            r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
+               WHERE product_id = ? AND movement_type = 'out'"#,
+            params![papel_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert!((consumed - 6.0).abs() < 1e-9, "Esperado consumo de 6 folhas, foi {}", consumed);
+
+        // Production_Inputs populated
+        let input_count: i64 = conn.query_row(
+            r#"SELECT COUNT(*) FROM "Production_Inputs" WHERE product_id = ?"#,
+            params![papel_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(input_count, 1);
+    }
+
+    #[test]
+    fn close_sale_with_insufficient_stock_returns_warning_and_proceeds() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let foto_id = insert_product(&conn, "Foto 10x15", true);
+        let papel_id = insert_product(&conn, "Papel", false);
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+
+        // No stock added — papel has 0 units
+
+        // Ficha técnica: 1 foto = 1 folha de papel
+        add_product_component_in_test(&conn, foto_id, papel_id, 1);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id],
+            |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, foto_id],
+        ).unwrap();
+
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0 }];
+        conn.execute_batch("BEGIN").unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        // Should have warned about insufficient stock
+        assert_eq!(warnings.len(), 1, "Deveria haver 1 aviso de estoque insuficiente");
+        assert!(warnings[0].contains("Papel"));
+
+        // Sale should still be closed
+        let status: String = conn
+            .query_row(r#"SELECT status FROM "Sales" WHERE id = ?"#, params![sale_id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(status, "closed");
+
+        // Stock movement still created (negative stock)
+        let consumed: f64 = conn.query_row(
+            r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
+               WHERE product_id = ? AND movement_type = 'out'"#,
+            params![papel_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert!((consumed - 1.0).abs() < 1e-9);
+    }
+
+    fn add_product_component_in_test(conn: &Connection, parent_id: i64, child_id: i64, quantity: i64) {
+        conn.execute(
+            r#"INSERT INTO "Product_Components"
+               (parent_id, child_id, quantity, updated_at, created_at)
+               VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![parent_id, child_id, quantity],
+        ).unwrap();
+    }
+
+    fn add_product_component_in_test_result(
+        conn: &Connection,
+        parent_id: i64,
+        child_id: i64,
+        quantity: i64,
+    ) -> Result<(), String> {
+        if parent_id == child_id {
+            return Err("Um produto não pode ser componente de si mesmo".to_string());
+        }
+        if quantity <= 0 {
+            return Err("Quantidade deve ser maior que zero".to_string());
+        }
+        let parent_sellable: bool = conn
+            .query_row(r#"SELECT sellable FROM "Products" WHERE id = ?"#, params![parent_id], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if !parent_sellable {
+            return Err("Apenas produtos vendáveis podem ter componentes".to_string());
+        }
+        let child_sellable: bool = conn
+            .query_row(r#"SELECT sellable FROM "Products" WHERE id = ?"#, params![child_id], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if child_sellable {
+            return Err("Componentes devem ser insumos (não vendáveis)".to_string());
+        }
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
+                params![parent_id, child_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if count > 0 {
+            return Err("Duplicado".to_string());
+        }
+        conn.execute(
+            r#"INSERT INTO "Product_Components" (parent_id, child_id, quantity, updated_at, created_at)
+               VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![parent_id, child_id, quantity],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
