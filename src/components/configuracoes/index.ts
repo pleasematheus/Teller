@@ -1,0 +1,1 @@
+export { ConfiguracoesModule } from "./ConfiguracoesModule";

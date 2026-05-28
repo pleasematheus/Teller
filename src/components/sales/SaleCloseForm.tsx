@@ -27,9 +27,10 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
   useEffect(() => {
     invoke<PaymentMethod[]>("list_payment_methods")
       .then((ms) => {
-        setMethods(ms)
-        if (ms.length > 0) {
-          setPayments([{ methodId: ms[0].id, amount: "" }])
+        const active = ms.filter((m) => m.active)
+        setMethods(active)
+        if (active.length > 0) {
+          setPayments([{ methodId: active[0].id, amount: "" }])
         }
       })
       .catch(() => {})

@@ -29,4 +29,5 @@ export interface PaymentMethod {
   id: number
   name: string
   max_fee_percent: number
+  active: boolean
 }

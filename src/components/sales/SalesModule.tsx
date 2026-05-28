@@ -61,7 +61,8 @@ export function SalesModule() {
     invoke<PricingRates>("get_pricing_rates").then(setRates).catch(() => {})
     invoke<PaymentMethod[]>("list_payment_methods")
       .then((ms) => {
-        const max = ms.reduce((m, x) => Math.max(m, x.max_fee_percent), 0)
+        const active = ms.filter((m) => m.active)
+        const max = active.reduce((m, x) => Math.max(m, x.max_fee_percent), 0)
         setMaxFeePct(max)
       })
       .catch(() => {})
