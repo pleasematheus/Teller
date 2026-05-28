@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { computeMaxDiscount, applyGlobalDiscount } from "@/lib/pricing"
 import type { Product, PricingRates } from "@/types/product"
 import type { Sale, SaleItem, SaleItemInput } from "@/types/sale"
@@ -24,19 +23,18 @@ type CartItem = {
 type GlobalMode = "R$" | "%"
 
 type Props = {
-  open: boolean
   sale: Sale | null
   products: Product[]
   rates: PricingRates
   maxFeePct: number
-  onClose: () => void
+  onCancel: () => void
   onSaved: () => void
 }
 
-export function SaleForm({ open, sale, products, rates, maxFeePct, onClose, onSaved }: Props) {
+export function SaleForm({ sale, products, rates, maxFeePct, onCancel, onSaved }: Props) {
   const isEdit = sale !== null
 
-  const [label, setLabel] = useState("")
+  const [label, setLabel] = useState(sale?.label ?? "")
   const [items, setItems] = useState<CartItem[]>([])
   const [search, setSearch] = useState("")
   const [searchOpen, setSearchOpen] = useState(false)
@@ -59,15 +57,6 @@ export function SaleForm({ open, sale, products, rates, maxFeePct, onClose, onSa
   }, [search, sellableProducts])
 
   useEffect(() => {
-    if (!open) return
-    setLabel(sale?.label ?? "")
-    setSearch("")
-    setSearchOpen(false)
-    setGlobalDiscount("")
-    setGlobalMode("R$")
-    setError(null)
-    setFocusedIdx(null)
-
     if (sale) {
       invoke<SaleItem[]>("get_sale_items", { saleId: sale.id })
         .then((rows) => {
@@ -87,10 +76,8 @@ export function SaleForm({ open, sale, products, rates, maxFeePct, onClose, onSa
           )
         })
         .catch(() => setItems([]))
-    } else {
-      setItems([])
     }
-  }, [open, sale, products])
+  }, [sale, products])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -185,7 +172,6 @@ export function SaleForm({ open, sale, products, rates, maxFeePct, onClose, onSa
         await invoke("create_sale", { label, userId: 1, items: payload })
       }
       onSaved()
-      onClose()
     } catch (err) {
       setError(String(err))
     } finally {
@@ -194,180 +180,174 @@ export function SaleForm({ open, sale, products, rates, maxFeePct, onClose, onSa
   }
 
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>{isEdit ? `Pedido #${sale.id}` : "Novo pedido"}</SheetTitle>
-        </SheetHeader>
+    <div className="flex-1 overflow-y-auto">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-5 max-w-lg mx-auto px-6 py-6">
+        {/* Label */}
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="sale-label">Identificação</Label>
+          <Input
+            id="sale-label"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Nome do cliente, nº do pedido…"
+          />
+        </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-5 px-6 pb-6">
-          {/* Label */}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="sale-label">Identificação</Label>
-            <Input
-              id="sale-label"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="Nome do cliente, nº do pedido…"
-            />
+        {/* Product search */}
+        <div className="flex flex-col gap-1.5" ref={searchRef}>
+          <Label>Adicionar produto</Label>
+          <Input
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value)
+              setSearchOpen(true)
+            }}
+            onFocus={() => setSearchOpen(true)}
+            placeholder="Buscar por nome…"
+          />
+          {searchOpen && filteredProducts.length > 0 && (
+            <div className="rounded-md border border-teller-border bg-teller-card shadow-md">
+              {filteredProducts.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => addProduct(p)}
+                  className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-teller-accent/10 transition-colors"
+                >
+                  <span className="text-teller-text truncate">{p.name}</span>
+                  <span className="text-teller-muted ml-2 shrink-0">{brl.format(p.final_price)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Items list */}
+        {items.length > 0 && (
+          <div className="flex flex-col gap-2">
+            {items.map((item, idx) => {
+              const { maxDiscountValue, maxDiscountPct } = computeMaxDiscount(
+                { cost_price: item.cost_price, expected_loss_rate: item.expected_loss_rate, final_price: item.final_price },
+                rates,
+                maxFeePct,
+              )
+              const discountedPrice = item.final_price * (1 - item.discount)
+              const floorPrice = item.final_price - maxDiscountValue
+              const belowFloor = item.discount > 0 && discountedPrice < floorPrice - 0.001
+              const showMaxHint = focusedIdx === idx || item.discount > 0
+
+              return (
+                <div key={idx} className="rounded-lg border border-teller-border bg-teller-card p-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-teller-text truncate flex-1">{item.product_name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeItem(idx)}
+                      className="text-teller-muted hover:text-red-500 text-xs ml-2"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="flex gap-2 items-end">
+                    <div className="flex flex-col gap-1 w-20">
+                      <span className="text-xs text-teller-muted">Qtd.</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={item.quantity}
+                        onChange={(e) => updateItem(idx, "quantity", e.target.value)}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1 flex-1">
+                      <span className="text-xs text-teller-muted">
+                        Desconto (%)
+                        {showMaxHint && (
+                          <span className={`ml-1 ${belowFloor ? "text-red-500" : "text-teller-muted"}`}>
+                            · máx. {brl.format(maxDiscountValue)} ({pct.format(maxDiscountPct)})
+                          </span>
+                        )}
+                      </span>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step="0.01"
+                        value={item.discount > 0 ? (item.discount * 100).toFixed(2) : ""}
+                        placeholder="0"
+                        onFocus={() => setFocusedIdx(idx)}
+                        onBlur={() => setFocusedIdx(null)}
+                        onChange={(e) => updateItem(idx, "discount", e.target.value)}
+                        className={`h-8 text-sm ${belowFloor ? "border-red-500 focus:ring-red-500" : ""}`}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1 w-24 text-right">
+                      <span className="text-xs text-teller-muted">Subtotal</span>
+                      <span className="text-sm font-medium text-teller-text h-8 flex items-center justify-end">
+                        {brl.format(item.final_price * item.quantity * (1 - item.discount))}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
+        )}
 
-          {/* Product search */}
-          <div className="flex flex-col gap-1.5" ref={searchRef}>
-            <Label>Adicionar produto</Label>
-            <Input
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value)
-                setSearchOpen(true)
-              }}
-              onFocus={() => setSearchOpen(true)}
-              placeholder="Buscar por nome…"
-            />
-            {searchOpen && filteredProducts.length > 0 && (
-              <div className="rounded-md border border-teller-border bg-teller-card shadow-md">
-                {filteredProducts.map((p) => (
+        {/* Global discount */}
+        {items.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <Label>Desconto global</Label>
+              <div className="flex gap-1 rounded-md border border-teller-border p-0.5 text-xs">
+                {(["R$", "%"] as GlobalMode[]).map((m) => (
                   <button
-                    key={p.id}
+                    key={m}
                     type="button"
-                    onClick={() => addProduct(p)}
-                    className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-teller-accent/10 transition-colors"
+                    onClick={() => { setGlobalMode(m); setGlobalDiscount("") }}
+                    className={[
+                      "px-2 py-0.5 rounded transition-colors",
+                      globalMode === m
+                        ? "bg-teller-accent text-white"
+                        : "text-teller-muted hover:text-teller-text",
+                    ].join(" ")}
                   >
-                    <span className="text-teller-text truncate">{p.name}</span>
-                    <span className="text-teller-muted ml-2 shrink-0">{brl.format(p.final_price)}</span>
+                    {m}
                   </button>
                 ))}
               </div>
-            )}
+            </div>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={globalDiscount}
+              onChange={(e) => handleGlobalDiscountChange(e.target.value)}
+              placeholder={globalMode === "R$" ? "0,00" : "0"}
+            />
           </div>
+        )}
 
-          {/* Items list */}
-          {items.length > 0 && (
-            <div className="flex flex-col gap-2">
-              {items.map((item, idx) => {
-                const { maxDiscountValue, maxDiscountPct } = computeMaxDiscount(
-                  { cost_price: item.cost_price, expected_loss_rate: item.expected_loss_rate, final_price: item.final_price },
-                  rates,
-                  maxFeePct,
-                )
-                const discountedPrice = item.final_price * (1 - item.discount)
-                const floorPrice = item.final_price - maxDiscountValue
-                const belowFloor = item.discount > 0 && discountedPrice < floorPrice - 0.001
-                const showMaxHint = focusedIdx === idx || item.discount > 0
-
-                return (
-                  <div key={idx} className="rounded-lg border border-teller-border bg-teller-card p-3 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-teller-text truncate flex-1">{item.product_name}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeItem(idx)}
-                        className="text-teller-muted hover:text-red-500 text-xs ml-2"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div className="flex gap-2 items-end">
-                      <div className="flex flex-col gap-1 w-20">
-                        <span className="text-xs text-teller-muted">Qtd.</span>
-                        <Input
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={item.quantity}
-                          onChange={(e) => updateItem(idx, "quantity", e.target.value)}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1 flex-1">
-                        <span className="text-xs text-teller-muted">
-                          Desconto (%)
-                          {showMaxHint && (
-                            <span className={`ml-1 ${belowFloor ? "text-red-500" : "text-teller-muted"}`}>
-                              · máx. {brl.format(maxDiscountValue)} ({pct.format(maxDiscountPct)})
-                            </span>
-                          )}
-                        </span>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step="0.01"
-                          value={item.discount > 0 ? (item.discount * 100).toFixed(2) : ""}
-                          placeholder="0"
-                          onFocus={() => setFocusedIdx(idx)}
-                          onBlur={() => setFocusedIdx(null)}
-                          onChange={(e) => updateItem(idx, "discount", e.target.value)}
-                          className={`h-8 text-sm ${belowFloor ? "border-red-500 focus:ring-red-500" : ""}`}
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1 w-24 text-right">
-                        <span className="text-xs text-teller-muted">Subtotal</span>
-                        <span className="text-sm font-medium text-teller-text h-8 flex items-center justify-end">
-                          {brl.format(item.final_price * item.quantity * (1 - item.discount))}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          {/* Global discount */}
-          {items.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between">
-                <Label>Desconto global</Label>
-                <div className="flex gap-1 rounded-md border border-teller-border p-0.5 text-xs">
-                  {(["R$", "%"] as GlobalMode[]).map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => { setGlobalMode(m); setGlobalDiscount("") }}
-                      className={[
-                        "px-2 py-0.5 rounded transition-colors",
-                        globalMode === m
-                          ? "bg-teller-accent text-white"
-                          : "text-teller-muted hover:text-teller-text",
-                      ].join(" ")}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={globalDiscount}
-                onChange={(e) => handleGlobalDiscountChange(e.target.value)}
-                placeholder={globalMode === "R$" ? "0,00" : "0"}
-              />
-            </div>
-          )}
-
-          {/* Order total */}
-          {items.length > 0 && (
-            <div className="flex justify-between text-sm font-medium border-t border-teller-border pt-3">
-              <span className="text-teller-muted">Total do pedido</span>
-              <span className="text-teller-accent">{brl.format(orderTotal)}</span>
-            </div>
-          )}
-
-          {error && <p className="text-sm text-red-500">{error}</p>}
-
-          <div className="flex gap-3 pt-2">
-            <Button type="button" variant="outline" onClick={onClose} className="flex-1">
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={saving} className="flex-1">
-              {saving ? "Salvando..." : isEdit ? "Salvar alterações" : "Criar pedido"}
-            </Button>
+        {/* Order total */}
+        {items.length > 0 && (
+          <div className="flex justify-between text-sm font-medium border-t border-teller-border pt-3">
+            <span className="text-teller-muted">Total do pedido</span>
+            <span className="text-teller-accent">{brl.format(orderTotal)}</span>
           </div>
-        </form>
-      </SheetContent>
-    </Sheet>
+        )}
+
+        {error && <p className="text-sm text-red-500">{error}</p>}
+
+        <div className="flex gap-3 pt-2">
+          <Button type="button" variant="outline" onClick={onCancel} className="flex-1">
+            Cancelar
+          </Button>
+          <Button type="submit" disabled={saving} className="flex-1">
+            {saving ? "Salvando..." : isEdit ? "Salvar alterações" : "Criar pedido"}
+          </Button>
+        </div>
+      </form>
+    </div>
   )
 }

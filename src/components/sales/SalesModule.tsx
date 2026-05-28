@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { SalesList } from "./SalesList"
 import { SaleForm } from "./SaleForm"
-import { SaleCloseSheet } from "./SaleCloseSheet"
+import { SaleCloseForm } from "./SaleCloseForm"
 import type { Sale, PaymentMethod } from "@/types/sale"
 import type { Product, PricingRates } from "@/types/product"
 
@@ -13,25 +13,38 @@ const DEFAULT_RATES: PricingRates = {
   no_sales_history: true,
 }
 
-type Tab = "open" | "history"
+// What the open form contains — separate from which tab is active
+type FormContent =
+  | { kind: "new-sale" }
+  | { kind: "view-sale"; sale: Sale }
+  | { kind: "close-sale"; sale: Sale }
 
-const TABS: { value: Tab; label: string }[] = [
-  { value: "open", label: "Em aberto" },
-  { value: "history", label: "Histórico" },
-]
+type SalesActiveView = "open" | "history" | "form"
+
+const tabClass = (active: boolean) =>
+  [
+    "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+    active
+      ? "border-teller-accent text-teller-accent"
+      : "border-transparent text-teller-muted hover:text-teller-text",
+  ].join(" ")
+
+function formLabel(content: FormContent): string {
+  if (content.kind === "new-sale") return "Novo pedido"
+  if (content.kind === "view-sale") return `Pedido #${content.sale.id}`
+  return `Fechar #${content.sale.id}`
+}
 
 export function SalesModule() {
-  const [tab, setTab] = useState<Tab>("open")
+  const [activeView, setActiveView] = useState<SalesActiveView>("open")
+  const [formContent, setFormContent] = useState<FormContent | null>(null)
+  const [newSaleKey, setNewSaleKey] = useState(0)
+
   const [openSales, setOpenSales] = useState<Sale[]>([])
   const [closedSales, setClosedSales] = useState<Sale[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [rates, setRates] = useState<PricingRates>(DEFAULT_RATES)
   const [maxFeePct, setMaxFeePct] = useState(0)
-
-  const [formOpen, setFormOpen] = useState(false)
-  const [selectedSale, setSelectedSale] = useState<Sale | null>(null)
-  const [closeSheetOpen, setCloseSheetOpen] = useState(false)
-  const [saleToClose, setSaleToClose] = useState<Sale | null>(null)
 
   const loadSales = useCallback(async () => {
     const [open, closed] = await Promise.all([
@@ -55,40 +68,82 @@ export function SalesModule() {
   }, [loadSales])
 
   const openNew = () => {
-    setSelectedSale(null)
-    setFormOpen(true)
+    // If "new-sale" form already open: re-activate it (preserve state)
+    if (formContent?.kind === "new-sale") {
+      setActiveView("form")
+      return
+    }
+    setNewSaleKey((k) => k + 1)
+    setFormContent({ kind: "new-sale" })
+    setActiveView("form")
   }
 
   const openView = (sale: Sale) => {
-    setSelectedSale(sale)
-    setFormOpen(true)
+    // If already viewing this sale: re-activate (preserve state)
+    if (formContent?.kind === "view-sale" && formContent.sale.id === sale.id) {
+      setActiveView("form")
+      return
+    }
+    setFormContent({ kind: "view-sale", sale })
+    setActiveView("form")
   }
 
   const openClose = (sale: Sale) => {
-    setSaleToClose(sale)
-    setCloseSheetOpen(true)
+    // If already closing this sale: re-activate (preserve state)
+    if (formContent?.kind === "close-sale" && formContent.sale.id === sale.id) {
+      setActiveView("form")
+      return
+    }
+    setFormContent({ kind: "close-sale", sale })
+    setActiveView("form")
   }
+
+  const closeForm = () => {
+    setFormContent(null)
+    setActiveView("open")
+  }
+
+  const isSaleForm = formContent?.kind === "new-sale" || formContent?.kind === "view-sale"
+  const activeSaleFormKey =
+    formContent?.kind === "view-sale" ? formContent.sale.id : newSaleKey
 
   return (
     <div className="flex flex-1 flex-col">
       <div className="flex border-b border-teller-border px-6 pt-4">
-        {TABS.map(({ value, label }) => (
-          <button
-            key={value}
-            onClick={() => setTab(value)}
-            className={[
-              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
-              tab === value
-                ? "border-teller-accent text-teller-accent"
-                : "border-transparent text-teller-muted hover:text-teller-text",
-            ].join(" ")}
-          >
-            {label}
-          </button>
-        ))}
+        <button
+          onClick={() => setActiveView("open")}
+          className={tabClass(activeView === "open")}
+        >
+          Em aberto
+        </button>
+        <button
+          onClick={() => setActiveView("history")}
+          className={tabClass(activeView === "history")}
+        >
+          Histórico
+        </button>
+
+        {formContent && (
+          <div className="flex items-center border-b-2 -mb-px border-teller-accent text-teller-accent">
+            <button
+              onClick={() => setActiveView("form")}
+              className="px-4 py-2 text-sm font-medium"
+            >
+              {formLabel(formContent)}
+            </button>
+            <button
+              type="button"
+              onClick={closeForm}
+              className="pr-3 rounded-sm hover:opacity-70 transition-opacity text-sm"
+              aria-label="Fechar"
+            >
+              ×
+            </button>
+          </div>
+        )}
       </div>
 
-      {tab === "open" ? (
+      <div className={activeView === "open" ? "flex flex-1 flex-col" : "hidden"}>
         <SalesList
           sales={openSales}
           mode="open"
@@ -96,31 +151,40 @@ export function SalesModule() {
           onClose={openClose}
           onNew={openNew}
         />
-      ) : (
+      </div>
+      <div className={activeView === "history" ? "flex flex-1 flex-col" : "hidden"}>
         <SalesList
           sales={closedSales}
           mode="history"
           onView={() => {}}
           onClose={() => {}}
         />
+      </div>
+
+      {formContent && isSaleForm && (
+        <div className={activeView === "form" ? "flex flex-1 flex-col" : "hidden"}>
+          <SaleForm
+            key={activeSaleFormKey}
+            sale={formContent.kind === "view-sale" ? formContent.sale : null}
+            products={products}
+            rates={rates}
+            maxFeePct={maxFeePct}
+            onCancel={closeForm}
+            onSaved={() => { loadSales(); closeForm() }}
+          />
+        </div>
       )}
 
-      <SaleForm
-        open={formOpen}
-        sale={selectedSale}
-        products={products}
-        rates={rates}
-        maxFeePct={maxFeePct}
-        onClose={() => setFormOpen(false)}
-        onSaved={loadSales}
-      />
-
-      <SaleCloseSheet
-        open={closeSheetOpen}
-        sale={saleToClose}
-        onClose={() => setCloseSheetOpen(false)}
-        onClosed={loadSales}
-      />
+      {formContent?.kind === "close-sale" && (
+        <div className={activeView === "form" ? "flex flex-1 flex-col" : "hidden"}>
+          <SaleCloseForm
+            key={formContent.sale.id}
+            sale={formContent.sale}
+            onCancel={closeForm}
+            onSaved={loadSales}
+          />
+        </div>
+      )}
     </div>
   )
 }
