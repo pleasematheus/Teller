@@ -4,7 +4,8 @@ export type ModuleId =
   | "relatorios"
   | "vendas"
   | "produtos"
-  | "configuracoes";
+  | "configuracoes"
+  | "financeiro";
 
 export type Tab = {
   id: string;
