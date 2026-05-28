@@ -2,7 +2,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
   WarehouseIcon,
   ShoppingCart01Icon,
-  Factory01Icon,
+  Analytics02Icon,
   Store01Icon,
   Tag01Icon,
   Settings01Icon,
@@ -24,7 +24,7 @@ type ModuleConfig = {
 export const MODULE_CONFIG: ModuleConfig[] = [
   { id: "estoque", label: "Estoque", icon: WarehouseIcon },
   { id: "compras", label: "Compras", icon: ShoppingCart01Icon },
-  { id: "producao", label: "Produção", icon: Factory01Icon },
+  { id: "relatorios", label: "Relatórios", icon: Analytics02Icon },
   { id: "vendas", label: "Vendas", icon: Store01Icon },
   { id: "produtos", label: "Produtos", icon: Tag01Icon },
   { id: "configuracoes", label: "Configurações", icon: Settings01Icon },

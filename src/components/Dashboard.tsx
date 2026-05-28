@@ -95,6 +95,11 @@ export function Dashboard({ user, onLogout }: Props) {
               if (module === "estoque") return <StockModule />;
               if (module === "compras") return <PurchasesModule />;
               if (module === "vendas") return <SalesModule />;
+              if (module === "relatorios") return (
+                <div className="flex flex-1 items-center justify-center">
+                  <p className="text-teller-muted text-sm">Relatórios — em breve</p>
+                </div>
+              );
               return (
                 <div className="flex flex-1 items-center justify-center">
                   <p className="text-teller-muted text-sm">{module}</p>
