@@ -38,30 +38,47 @@ export function ProductForm({ open, product, rates, onClose, onSaved }: Props) {
   const [costPrice, setCostPrice] = useState("")
   const [lossRatePct, setLossRatePct] = useState("")
   const [lossMode, setLossMode] = useState<LossMode>("auto")
+  const [profitMargin, setProfitMargin] = useState("")
+  const [noMarginHistory, setNoMarginHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [calculating, setCalculating] = useState(false)
 
   useEffect(() => {
-    if (open) {
-      setName(product?.name ?? "")
-      setDescription(product?.description ?? "")
-      setActive(product?.active ?? true)
-      setSellable(product?.sellable ?? true)
-      setUnit(product?.unit ?? "unidade")
-      setCostPrice(product ? String(product.cost_price) : "")
-      setLossRatePct(product ? String(product.expected_loss_rate * 100) : "0")
-      setLossMode("manual")
-      setError(null)
+    if (!open) return
+    setName(product?.name ?? "")
+    setDescription(product?.description ?? "")
+    setActive(product?.active ?? true)
+    setSellable(product?.sellable ?? true)
+    setUnit(product?.unit ?? "unidade")
+    setCostPrice(product ? String(product.cost_price) : "")
+    setLossRatePct(product ? String(product.expected_loss_rate * 100) : "0")
+    setLossMode("manual")
+    setError(null)
+    setNoMarginHistory(false)
+
+    if (product) {
+      setProfitMargin(String((product.profit_margin * 100).toFixed(2)))
+    } else {
+      invoke<number>("get_realized_margin")
+        .then((rate) => {
+          setProfitMargin(String((rate * 100).toFixed(2)))
+          setNoMarginHistory(rate === 0)
+        })
+        .catch(() => {
+          setProfitMargin("0")
+          setNoMarginHistory(true)
+        })
     }
   }, [open, product])
 
   const parsedCost = parseFloat(costPrice) || 0
   const parsedLossRate = (parseFloat(lossRatePct) || 0) / 100
+  const parsedProfitMargin = (parseFloat(profitMargin) || 0) / 100
 
   const breakdown = useMemo(
-    () => computePrice(parsedCost, parsedLossRate, rates),
-    [parsedCost, parsedLossRate, rates],
+    () => computePrice(parsedCost, parsedLossRate, rates, parsedProfitMargin),
+    [parsedCost, parsedLossRate, rates, parsedProfitMargin],
   )
 
   const handleCalcLoss = async () => {
@@ -92,6 +109,7 @@ export function ProductForm({ open, product, rates, onClose, onSaved }: Props) {
       markup: breakdown.markup_percent,
       finalPrice: breakdown.final_price,
       expectedLossRate: parsedLossRate,
+      profitMargin: parsedProfitMargin,
     }
 
     try {
@@ -230,6 +248,26 @@ export function ProductForm({ open, product, rates, onClose, onSaved }: Props) {
                     : "Disponível apenas na edição"}
               </Button>
             )}
+          </div>
+
+          {/* Profit margin */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="profit-margin">Margem de lucro (%)</Label>
+            {noMarginHistory && (
+              <p className="text-xs text-amber-500">
+                Sem histórico de vendas — margem sugerida indisponível.
+              </p>
+            )}
+            <Input
+              id="profit-margin"
+              type="number"
+              min={0}
+              max={99}
+              step="0.01"
+              value={profitMargin}
+              onChange={(e) => setProfitMargin(e.target.value)}
+              placeholder="0"
+            />
           </div>
 
           {/* Price breakdown */}

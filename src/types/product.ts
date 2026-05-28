@@ -9,13 +9,14 @@ export interface Product {
   final_price: number
   expected_loss_rate: number
   unit: string
+  profit_margin: number
 }
 
 export interface PricingRates {
   cv: number
   df: number
   investment_rate: number
-  profit_margin: number
+  profit_margin?: number
   no_sales_history: boolean
 }
 

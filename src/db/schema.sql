@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS "Products" (
     "expected_loss_rate" DECIMAL(5,4)  NOT NULL DEFAULT 0,
     "sellable"           BOOLEAN       NOT NULL DEFAULT TRUE,
     "unit"               VARCHAR       NOT NULL DEFAULT 'unidade' CHECK (unit IN ('unidade','rolo','bobina','ml','folha')),
+    "profit_margin"      DECIMAL(5,4)  NOT NULL DEFAULT 0,
     "updated_at"         TIMESTAMP     NOT NULL,
     "created_at"         TIMESTAMP     NOT NULL
 );
@@ -121,6 +122,7 @@ CREATE SEQUENCE IF NOT EXISTS sales_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Sales" (
     "id"          INTEGER       DEFAULT nextval('sales_id_seq') PRIMARY KEY,
     "user_id"     INTEGER       NOT NULL,
+    "label"       VARCHAR       NOT NULL DEFAULT '',
     "status"      VARCHAR       NOT NULL DEFAULT 'open',
     "total_value" DECIMAL(10,2) NOT NULL DEFAULT 0,
     "updated_at"  TIMESTAMP     NOT NULL,

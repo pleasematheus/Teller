@@ -5,6 +5,7 @@ import { Launcher } from "./dashboard/Launcher";
 import { Products } from "./products";
 import { StockModule } from "./stock";
 import { PurchasesModule } from "./purchases";
+import { SalesModule } from "./sales";
 import { type Tab, type ModuleId } from "./dashboard/types";
 import { useTheme } from "@/hooks/useTheme";
 
@@ -93,6 +94,7 @@ export function Dashboard({ user, onLogout }: Props) {
               if (module === "produtos") return <Products />;
               if (module === "estoque") return <StockModule />;
               if (module === "compras") return <PurchasesModule />;
+              if (module === "vendas") return <SalesModule />;
               return (
                 <div className="flex flex-1 items-center justify-center">
                   <p className="text-teller-muted text-sm">{module}</p>
