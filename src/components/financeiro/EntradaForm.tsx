@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import type { EntryType, FinancialEntry } from "@/types/financeiro";
+import type { EntryType, ExpenseSubtype, FinancialEntry } from "@/types/financeiro";
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -27,6 +27,9 @@ export function EntradaForm({ entryType, initial, defaultMonth, onSaved, onCance
   const [referenceDate, setReferenceDate] = useState(
     initial?.reference_date?.slice(0, 10) ?? `${defaultMonth}-01`
   );
+  const [expenseSubtype, setExpenseSubtype] = useState<ExpenseSubtype | "">(
+    (initial?.expense_subtype as ExpenseSubtype) ?? ""
+  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -41,6 +44,7 @@ export function EntradaForm({ entryType, initial, defaultMonth, onSaved, onCance
 
     setSaving(true);
     try {
+      const subtypePayload = entryType === "expense" && expenseSubtype ? expenseSubtype : null;
       if (isEdit) {
         await invoke("update_financial_entry", {
           id: initial.id,
@@ -50,6 +54,7 @@ export function EntradaForm({ entryType, initial, defaultMonth, onSaved, onCance
           isFixed,
           isRecurring,
           referenceDate,
+          expenseSubtype: subtypePayload,
         });
       } else {
         await invoke("create_financial_entry", {
@@ -60,6 +65,7 @@ export function EntradaForm({ entryType, initial, defaultMonth, onSaved, onCance
           isFixed,
           isRecurring,
           referenceDate,
+          expenseSubtype: subtypePayload,
         });
       }
       onSaved();
@@ -94,6 +100,25 @@ export function EntradaForm({ entryType, initial, defaultMonth, onSaved, onCance
             placeholder="Ex: Infraestrutura, Marketing, Serviços…"
           />
         </div>
+
+        {entryType === "expense" && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="fe-subtype">Tipo de despesa</Label>
+            <select
+              id="fe-subtype"
+              value={expenseSubtype}
+              onChange={(e) => setExpenseSubtype(e.target.value as ExpenseSubtype | "")}
+              className="flex h-9 w-full rounded-md border border-teller-border bg-teller-bg px-3 py-1 text-sm text-teller-text shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teller-accent"
+            >
+              <option value="">Sem classificação</option>
+              <option value="despesa">Despesa (aluguel, energia, papel…)</option>
+              <option value="custo">Custo (pessoal, manutenção…)</option>
+              <option value="juros">Juros</option>
+              <option value="imposto">Imposto (IR, CSLL…)</option>
+              <option value="devolucao">Devolução</option>
+            </select>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="fe-amount">Valor (R$)</Label>

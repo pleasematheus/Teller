@@ -6,11 +6,13 @@ pub mod auth;
 pub mod db;
 pub mod financials;
 pub mod products;
+pub mod reports;
 pub mod sales;
 pub mod settings;
 pub mod stock;
 
-pub use db::{DbState, ensure_label_column, ensure_profit_margin_column,
+pub use db::{DbState, ensure_financial_entries_expense_subtype, ensure_label_column,
+             ensure_profit_margin_column, ensure_sales_products_cost_price,
              ensure_unit_column, ensure_user_settings_table, init_schema};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -29,6 +31,14 @@ pub fn run() {
                 }
             };
             let conn = Connection::open(db_path)?;
+            let io_err = |e: String| std::io::Error::new(std::io::ErrorKind::Other, e);
+            init_schema(&conn).map_err(&io_err)?;
+            ensure_user_settings_table(&conn).map_err(&io_err)?;
+            ensure_unit_column(&conn).map_err(&io_err)?;
+            ensure_profit_margin_column(&conn).map_err(&io_err)?;
+            ensure_label_column(&conn).map_err(&io_err)?;
+            ensure_sales_products_cost_price(&conn).map_err(&io_err)?;
+            ensure_financial_entries_expense_subtype(&conn).map_err(&io_err)?;
             app.manage(DbState(Mutex::new(conn)));
             Ok(())
         })
@@ -76,6 +86,7 @@ pub fn run() {
             settings::update_payment_method,
             settings::list_transaction_fees,
             settings::upsert_transaction_fee,
+            reports::get_dre,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
