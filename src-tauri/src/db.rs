@@ -43,6 +43,22 @@ pub fn ensure_label_column(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+pub fn ensure_sales_products_cost_price(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"ALTER TABLE "Sales_Products" ADD COLUMN IF NOT EXISTS
+           "cost_price" DECIMAL(10,2)"#,
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn ensure_financial_entries_expense_subtype(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"ALTER TABLE "Financial_Entries" ADD COLUMN IF NOT EXISTS
+           "expense_subtype" VARCHAR"#,
+    )
+    .map_err(|e| e.to_string())
+}
+
 pub fn init_schema(conn: &Connection) -> Result<(), String> {
     // execute_batch aborts DuckDB when objects already exist, even with IF NOT EXISTS.
     // Skip entirely if the schema was already initialized in a previous run.
@@ -69,5 +85,7 @@ pub(crate) fn test_db() -> Connection {
     ensure_unit_column(&conn).unwrap();
     ensure_profit_margin_column(&conn).unwrap();
     ensure_label_column(&conn).unwrap();
+    ensure_sales_products_cost_price(&conn).unwrap();
+    ensure_financial_entries_expense_subtype(&conn).unwrap();
     conn
 }

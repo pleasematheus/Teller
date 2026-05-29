@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS "Sales_Products" (
     "price"            DECIMAL(10,2) NOT NULL,
     "discount"         DECIMAL(5,4)  NOT NULL DEFAULT 0,
     "discounted_price" DECIMAL(10,2) NOT NULL DEFAULT 0,
+    "cost_price"       DECIMAL(10,2),
     "created_at"       TIMESTAMP     NOT NULL,
     FOREIGN KEY ("sale_id")    REFERENCES "Sales"    ("id"),
     FOREIGN KEY ("product_id") REFERENCES "Products" ("id")
@@ -192,6 +193,7 @@ CREATE TABLE IF NOT EXISTS "Financial_Entries" (
     "is_recurring"   BOOLEAN,
     "is_fixed"       BOOLEAN       NOT NULL DEFAULT FALSE,
     "reference_date" DATE,
+    "expense_subtype" VARCHAR,
     "updated_at"     TIMESTAMP     NOT NULL,
     "created_at"     TIMESTAMP     NOT NULL,
     FOREIGN KEY ("product_id") REFERENCES "Products" ("id")

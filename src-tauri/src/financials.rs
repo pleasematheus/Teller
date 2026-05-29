@@ -14,6 +14,7 @@ pub struct FinancialEntry {
     pub is_fixed: bool,
     pub is_recurring: bool,
     pub reference_date: String,
+    pub expense_subtype: Option<String>,
 }
 
 #[tauri::command]
@@ -27,7 +28,7 @@ pub fn list_financial_entries(
     let mut stmt = conn
         .prepare(r#"
             SELECT id, type, name, category, amount, is_fixed, is_recurring,
-                   CAST(reference_date AS VARCHAR)
+                   CAST(reference_date AS VARCHAR), expense_subtype
             FROM "Financial_Entries"
             WHERE strftime('%Y-%m', reference_date) = ?
               AND type = ?
@@ -46,6 +47,7 @@ pub fn list_financial_entries(
                 is_fixed: row.get(5)?,
                 is_recurring: row.get(6)?,
                 reference_date: row.get(7)?,
+                expense_subtype: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -68,7 +70,7 @@ pub fn list_recurring_suggestions(
         .prepare(r#"
             SELECT DISTINCT ON (name, type)
                 id, type, name, category, amount, is_fixed, is_recurring,
-                CAST(reference_date AS VARCHAR)
+                CAST(reference_date AS VARCHAR), expense_subtype
             FROM "Financial_Entries"
             WHERE is_recurring = true
               AND type = ?
@@ -92,6 +94,7 @@ pub fn list_recurring_suggestions(
                 is_fixed: row.get(5)?,
                 is_recurring: row.get(6)?,
                 reference_date: row.get(7)?,
+                expense_subtype: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -110,6 +113,7 @@ pub fn create_financial_entry(
     is_fixed: bool,
     is_recurring: bool,
     reference_date: String,
+    expense_subtype: Option<String>,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -132,10 +136,10 @@ pub fn create_financial_entry(
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
         r#"INSERT INTO "Financial_Entries"
-           (type, name, category, amount, is_fixed, is_recurring, reference_date,
-            updated_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, CAST(? AS DATE), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-        params![entry_type, name, category, amount, is_fixed, is_recurring, reference_date],
+           (type, name, category, amount, is_fixed, is_recurring, expense_subtype,
+            reference_date, updated_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS DATE), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+        params![entry_type, name, category, amount, is_fixed, is_recurring, expense_subtype, reference_date],
     )
     .map_err(|e| e.to_string())?;
 
@@ -151,6 +155,7 @@ pub fn update_financial_entry(
     is_fixed: bool,
     is_recurring: bool,
     reference_date: String,
+    expense_subtype: Option<String>,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -172,9 +177,10 @@ pub fn update_financial_entry(
         .execute(
             r#"UPDATE "Financial_Entries"
                SET name = ?, category = ?, amount = ?, is_fixed = ?, is_recurring = ?,
+                   expense_subtype = ?,
                    reference_date = CAST(? AS DATE), updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
-            params![name, category, amount, is_fixed, is_recurring, reference_date, id],
+            params![name, category, amount, is_fixed, is_recurring, expense_subtype, reference_date, id],
         )
         .map_err(|e| e.to_string())?;
 

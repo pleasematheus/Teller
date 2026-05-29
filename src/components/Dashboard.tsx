@@ -7,6 +7,7 @@ import { StockModule } from "./stock";
 import { PurchasesModule } from "./purchases";
 import { SalesModule } from "./sales";
 import { FinanceiroModule } from "./financeiro";
+import { RelatoriosModule } from "./relatorios";
 import { ConfiguracoesModule } from "./configuracoes";
 import { type Tab, type ModuleId } from "./dashboard/types";
 import { useTheme } from "@/hooks/useTheme";
@@ -97,11 +98,7 @@ export function Dashboard({ user, onLogout }: Props) {
               if (module === "estoque") return <StockModule />;
               if (module === "compras") return <PurchasesModule />;
               if (module === "vendas") return <SalesModule />;
-              if (module === "relatorios") return (
-                <div className="flex flex-1 items-center justify-center">
-                  <p className="text-teller-muted text-sm">Relatórios — em breve</p>
-                </div>
-              );
+              if (module === "relatorios") return <RelatoriosModule />;
               if (module === "financeiro") return <FinanceiroModule />;
               if (module === "configuracoes") return (
                 <ConfiguracoesModule user={user} theme={theme} onThemeChange={setTheme} />

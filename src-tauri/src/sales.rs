@@ -354,6 +354,32 @@ pub fn do_close_sale_work(
         }
     }
 
+    let sp_ids: Vec<(i64, i64)> = {
+        let mut stmt = conn
+            .prepare(r#"SELECT id, product_id FROM "Sales_Products" WHERE sale_id = ?"#)
+            .map_err(|e| e.to_string())?;
+        stmt.query_map(params![sale_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?
+    };
+    for (sp_id, pid) in sp_ids {
+        let product_cost: f64 = conn
+            .query_row(
+                r#"SELECT cost_price FROM "Products" WHERE id = ?"#,
+                params![pid],
+                |r| r.get(0),
+            )
+            .unwrap_or(0.0);
+        conn.execute(
+            r#"UPDATE "Sales_Products" SET cost_price = ? WHERE id = ?"#,
+            params![product_cost, sp_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     conn.execute(
         r#"UPDATE "Sales" SET status = 'closed', updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
         params![sale_id],
@@ -575,6 +601,40 @@ mod tests {
             |r| r.get(0),
         ).unwrap();
         assert_eq!(input_count, 1);
+    }
+
+    #[test]
+    fn close_sale_snapshots_cost_price() {
+        // insert_product hardcodes cost_price = 10.0; verify the snapshot captures that value
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Foto", true);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0 }];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let cost: Option<f64> = conn.query_row(
+            r#"SELECT cost_price FROM "Sales_Products" WHERE sale_id = ?"#,
+            params![sale_id], |r| r.get(0),
+        ).unwrap();
+        assert!(cost.is_some(), "cost_price não deve ser NULL após fechar venda");
+        assert!((cost.unwrap() - 10.0).abs() < 1e-9, "cost_price deveria ser 10.0 (snapshot do produto), foi {:?}", cost);
     }
 
     #[test]
