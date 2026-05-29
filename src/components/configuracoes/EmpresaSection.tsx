@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 
 type BusinessInfo = {
   name: string;
-  investment_rate: number;
-  profit_margin: number;
+  investment_rate: number | null;
+  profit_margin: number | null;
 };
 
 type FormState = {
@@ -30,8 +30,8 @@ export function EmpresaSection() {
       .then((info) => {
         setForm({
           name: info.name,
-          investmentRate: String(Math.round(info.investment_rate * 10000) / 100),
-          profitMargin: String(Math.round(info.profit_margin * 10000) / 100),
+          investmentRate: info.investment_rate != null ? String(Math.round(info.investment_rate * 10000) / 100) : "",
+          profitMargin: info.profit_margin != null ? String(Math.round(info.profit_margin * 10000) / 100) : "",
         });
       })
       .finally(() => setLoading(false));
@@ -49,8 +49,8 @@ export function EmpresaSection() {
     setError(null);
     setSuccess(false);
 
-    const investmentRate = parseFloat(form.investmentRate) / 100;
-    const profitMargin = parseFloat(form.profitMargin) / 100;
+    const investmentRate = form.investmentRate !== "" ? parseFloat(form.investmentRate) / 100 : null;
+    const profitMargin = form.profitMargin !== "" ? parseFloat(form.profitMargin) / 100 : null;
 
     try {
       await invoke("update_business_settings", {

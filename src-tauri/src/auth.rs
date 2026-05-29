@@ -61,6 +61,8 @@ pub fn check_setup(state: State<DbState>) -> Result<bool, String> {
     crate::db::ensure_unit_column(&conn)?;
     crate::db::ensure_profit_margin_column(&conn)?;
     crate::db::ensure_label_column(&conn)?;
+    crate::db::ensure_business_settings_nullable(&conn)?;
+    crate::db::ensure_business_settings_double_type(&conn)?;
     let count: i64 = conn
         .query_row(
             r#"SELECT COUNT(*) FROM "Users" WHERE active = true"#,
@@ -128,8 +130,8 @@ pub fn check_business_setup(state: State<DbState>) -> Result<bool, String> {
 #[tauri::command]
 pub fn create_business_settings(
     name: String,
-    investment_rate: f64,
-    profit_margin: f64,
+    investment_rate: Option<f64>,
+    profit_margin: Option<f64>,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -137,15 +139,20 @@ pub fn create_business_settings(
     if name.is_empty() {
         return Err("Nome da empresa é obrigatório".to_string());
     }
-    if !(0.0..=1.0).contains(&investment_rate) || !(0.0..=1.0).contains(&profit_margin) {
+    if investment_rate.map_or(false, |r| !(0.0..=1.0).contains(&r))
+        || profit_margin.map_or(false, |r| !(0.0..=1.0).contains(&r))
+    {
         return Err("Taxas devem estar entre 0% e 100%".to_string());
     }
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
+    // Columns are DOUBLE (not DECIMAL): Option<f64> binds and reads correctly via params!.
+    let ir: &dyn duckdb::types::ToSql = match &investment_rate { Some(v) => v, None => &duckdb::types::Null };
+    let pm: &dyn duckdb::types::ToSql = match &profit_margin { Some(v) => v, None => &duckdb::types::Null };
     conn.execute(
         r#"INSERT INTO "Business_Settings" (name, investment_rate, profit_margin, updated_at, created_at)
            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-        params![name, investment_rate, profit_margin],
+        &[&name as &dyn duckdb::types::ToSql, ir, pm],
     )
     .map_err(|e| e.to_string())?;
 
@@ -320,6 +327,50 @@ mod tests {
         assert!(!(0.0_f64..=1.0).contains(&1.5));
         assert!(!(0.0_f64..=1.0).contains(&-0.1));
         assert!((0.0_f64..=1.0).contains(&0.5));
+    }
+
+    fn insert_business_settings_with_rates(conn: &duckdb::Connection, name: &str, ir: Option<f64>, pm: Option<f64>) {
+        let ir_sql = ir.map(|v| format!("{:.4}", v)).unwrap_or_else(|| "NULL".to_string());
+        let pm_sql = pm.map(|v| format!("{:.4}", v)).unwrap_or_else(|| "NULL".to_string());
+        conn.execute(
+            &format!(
+                r#"INSERT INTO "Business_Settings" (name, investment_rate, profit_margin, updated_at, created_at)
+                   VALUES (?, {}, {}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+                ir_sql, pm_sql
+            ),
+            params![name],
+        )
+        .unwrap();
+    }
+
+#[test]
+    fn create_business_settings_stores_rates_correctly() {
+        let conn = test_db();
+        insert_business_settings_with_rates(&conn, "Empresa Teste", Some(0.10), Some(0.20));
+        let (ir_out, pm_out): (Option<f64>, Option<f64>) = conn
+            .query_row(
+                r#"SELECT investment_rate, profit_margin FROM "Business_Settings" LIMIT 1"#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(ir_out, Some(0.10));
+        assert_eq!(pm_out, Some(0.20));
+    }
+
+    #[test]
+    fn create_business_settings_stores_null_rates_correctly() {
+        let conn = test_db();
+        insert_business_settings_with_rates(&conn, "Empresa Sem Taxa", None, None);
+        let (ir_out, pm_out): (Option<f64>, Option<f64>) = conn
+            .query_row(
+                r#"SELECT investment_rate, profit_margin FROM "Business_Settings" LIMIT 1"#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(ir_out, None);
+        assert_eq!(pm_out, None);
     }
 
     #[test]

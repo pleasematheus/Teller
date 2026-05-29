@@ -8,8 +8,8 @@ use crate::db::DbState;
 #[derive(Serialize)]
 pub struct BusinessInfo {
     pub name: String,
-    pub investment_rate: f64,
-    pub profit_margin: f64,
+    pub investment_rate: Option<f64>,
+    pub profit_margin: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -89,8 +89,8 @@ pub fn get_business_info(state: State<DbState>) -> Result<BusinessInfo, String> 
 #[tauri::command]
 pub fn update_business_settings(
     name: String,
-    investment_rate: f64,
-    profit_margin: f64,
+    investment_rate: Option<f64>,
+    profit_margin: Option<f64>,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -98,18 +98,21 @@ pub fn update_business_settings(
     if name.is_empty() {
         return Err("Nome da empresa não pode ser vazio".to_string());
     }
-    if !(0.0..=1.0).contains(&investment_rate) {
+    if investment_rate.map_or(false, |r| !(0.0..=1.0).contains(&r)) {
         return Err("Taxa de investimento deve estar entre 0% e 100%".to_string());
     }
-    if !(0.0..=1.0).contains(&profit_margin) {
+    if profit_margin.map_or(false, |r| !(0.0..=1.0).contains(&r)) {
         return Err("Margem de lucro deve estar entre 0% e 100%".to_string());
     }
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
+    // Columns are DOUBLE (not DECIMAL): Option<f64> binds and reads correctly via params!.
+    let ir: &dyn duckdb::types::ToSql = match &investment_rate { Some(v) => v, None => &duckdb::types::Null };
+    let pm: &dyn duckdb::types::ToSql = match &profit_margin { Some(v) => v, None => &duckdb::types::Null };
     conn.execute(
         r#"UPDATE "Business_Settings"
            SET name = ?, investment_rate = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP"#,
-        params![name, investment_rate, profit_margin],
+        &[&name as &dyn duckdb::types::ToSql, ir, pm],
     )
     .map_err(|e| e.to_string())?;
 
