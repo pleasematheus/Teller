@@ -1,4 +1,3 @@
-use duckdb::Connection;
 use std::sync::Mutex;
 use tauri::Manager;
 
@@ -13,7 +12,7 @@ pub mod stock;
 
 pub use db::{DbState, ensure_financial_entries_expense_subtype, ensure_label_column,
              ensure_profit_margin_column, ensure_sales_products_cost_price,
-             ensure_unit_column, ensure_user_settings_table, init_schema};
+             ensure_unit_column, ensure_user_settings_table, init_schema, open_database};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,7 +29,8 @@ pub fn run() {
                     data_dir.join("teller.db")
                 }
             };
-            let conn = Connection::open(db_path)?;
+            let conn = open_database(&db_path)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
             let io_err = |e: String| std::io::Error::new(std::io::ErrorKind::Other, e);
             init_schema(&conn).map_err(&io_err)?;
             ensure_user_settings_table(&conn).map_err(&io_err)?;
@@ -88,6 +88,17 @@ pub fn run() {
             settings::upsert_transaction_fee,
             reports::get_dre,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::WindowEvent {
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } = event
+            {
+                if let Ok(conn) = app_handle.state::<DbState>().0.lock() {
+                    let _ = conn.execute_batch("CHECKPOINT");
+                }
+            }
+        });
 }

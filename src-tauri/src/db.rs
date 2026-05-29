@@ -3,6 +3,20 @@ use std::sync::Mutex;
 
 const SCHEMA: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/db/schema.sql"));
 
+pub fn open_database(path: &std::path::Path) -> Result<Connection, duckdb::Error> {
+    match Connection::open(path) {
+        Ok(conn) => Ok(conn),
+        Err(_) => {
+            // WAL replay can fail due to a DuckDB 1.4.4 bug ("DatabaseManager::GetDefaultDatabase
+            // with no default database set"). Delete the stale WAL and retry; the main DB file
+            // remains consistent since WAL data hasn't been applied yet.
+            let wal_path = format!("{}.wal", path.display());
+            let _ = std::fs::remove_file(&wal_path);
+            Connection::open(path)
+        }
+    }
+}
+
 pub struct DbState(pub Mutex<Connection>);
 
 pub fn ensure_user_settings_table(conn: &Connection) -> Result<(), String> {
