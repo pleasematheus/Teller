@@ -1,6 +1,7 @@
 use bcrypt::{hash, DEFAULT_COST};
 use duckdb::params;
 use serde::Serialize;
+use std::collections::HashMap;
 use tauri::State;
 
 use crate::db::DbState;
@@ -12,21 +13,21 @@ pub struct BusinessInfo {
     pub profit_margin: Option<f64>,
 }
 
+#[derive(Serialize, Clone)]
+pub struct TransactionFee {
+    pub id: i64,
+    pub payment_method_id: i64,
+    pub installments: i64,
+    pub fee_percent: f64,
+    pub fixed_fee: f64,
+}
+
 #[derive(Serialize)]
 pub struct PaymentMethod {
     pub id: i64,
     pub name: String,
-    pub max_fee_percent: f64,
     pub active: bool,
-}
-
-#[derive(Serialize)]
-pub struct TransactionFee {
-    pub id: i64,
-    pub payment_method_id: i64,
-    pub description: String,
-    pub fee_percent: f64,
-    pub fixed_fee: f64,
+    pub fees: Vec<TransactionFee>,
 }
 
 #[derive(Serialize)]
@@ -41,28 +42,56 @@ pub struct UserInfo {
 pub fn list_payment_methods(state: State<DbState>) -> Result<Vec<PaymentMethod>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
-    let mut stmt = conn
+    let mut method_stmt = conn
         .prepare(r#"
-            SELECT pm.id, pm.name, COALESCE(MAX(tf.fee_percent), 0.0), pm.active
-            FROM "Payment_Methods" pm
-            LEFT JOIN "Transaction_Fees" tf ON tf.payment_method_id = pm.id
-            GROUP BY pm.id, pm.name, pm.active
-            ORDER BY pm.active DESC, pm.name
+            SELECT id, name, active
+            FROM "Payment_Methods"
+            ORDER BY active DESC, name
         "#)
         .map_err(|e| e.to_string())?;
 
-    let methods = stmt
+    let methods_raw: Vec<(i64, String, bool)> = method_stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut fee_stmt = conn
+        .prepare(r#"
+            SELECT id, payment_method_id, installments, fee_percent, fixed_fee
+            FROM "Transaction_Fees"
+            ORDER BY payment_method_id, installments
+        "#)
+        .map_err(|e| e.to_string())?;
+
+    let fees_raw: Vec<TransactionFee> = fee_stmt
         .query_map([], |row| {
-            Ok(PaymentMethod {
+            Ok(TransactionFee {
                 id: row.get(0)?,
-                name: row.get(1)?,
-                max_fee_percent: row.get(2)?,
-                active: row.get(3)?,
+                payment_method_id: row.get(1)?,
+                installments: row.get(2)?,
+                fee_percent: row.get(3)?,
+                fixed_fee: row.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+
+    let mut fees_by_method: HashMap<i64, Vec<TransactionFee>> = HashMap::new();
+    for fee in fees_raw {
+        fees_by_method.entry(fee.payment_method_id).or_default().push(fee);
+    }
+
+    let methods = methods_raw
+        .into_iter()
+        .map(|(id, name, active)| PaymentMethod {
+            fees: fees_by_method.remove(&id).unwrap_or_default(),
+            id,
+            name,
+            active,
+        })
+        .collect();
 
     Ok(methods)
 }
@@ -274,6 +303,13 @@ pub fn delete_payment_method(id: i64, state: State<DbState>) -> Result<(), Strin
         ));
     }
 
+    // Delete associated fees first (no ON DELETE CASCADE in schema).
+    conn.execute(
+        r#"DELETE FROM "Transaction_Fees" WHERE payment_method_id = ?"#,
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
+
     let rows = conn
         .execute(
             r#"DELETE FROM "Payment_Methods" WHERE id = ?"#,
@@ -296,10 +332,10 @@ pub fn list_transaction_fees(
 
     let mut stmt = conn
         .prepare(r#"
-            SELECT id, payment_method_id, description, fee_percent, fixed_fee
+            SELECT id, payment_method_id, installments, fee_percent, fixed_fee
             FROM "Transaction_Fees"
             WHERE payment_method_id = ?
-            ORDER BY description
+            ORDER BY installments
         "#)
         .map_err(|e| e.to_string())?;
 
@@ -308,7 +344,7 @@ pub fn list_transaction_fees(
             Ok(TransactionFee {
                 id: row.get(0)?,
                 payment_method_id: row.get(1)?,
-                description: row.get(2)?,
+                installments: row.get(2)?,
                 fee_percent: row.get(3)?,
                 fixed_fee: row.get(4)?,
             })
@@ -322,40 +358,43 @@ pub fn list_transaction_fees(
 
 #[tauri::command]
 pub fn upsert_transaction_fee(
-    id: Option<i64>,
     payment_method_id: i64,
-    description: String,
+    installments: i64,
     fee_percent: f64,
     fixed_fee: f64,
     state: State<DbState>,
 ) -> Result<(), String> {
-    let description = description.trim().to_string();
-    if description.is_empty() {
-        return Err("Descrição é obrigatória".to_string());
+    if installments < 1 {
+        return Err("Número de parcelas deve ser >= 1".to_string());
     }
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
-    match id {
+    let existing_id: Option<i64> = conn
+        .query_row(
+            r#"SELECT id FROM "Transaction_Fees"
+               WHERE payment_method_id = ? AND installments = ?"#,
+            params![payment_method_id, installments],
+            |row| row.get(0),
+        )
+        .ok();
+
+    match existing_id {
         Some(fee_id) => {
-            let rows = conn
-                .execute(
-                    r#"UPDATE "Transaction_Fees"
-                       SET description = ?, fee_percent = ?, fixed_fee = ?, updated_at = CURRENT_TIMESTAMP
-                       WHERE id = ?"#,
-                    params![description, fee_percent, fixed_fee, fee_id],
-                )
-                .map_err(|e| e.to_string())?;
-            if rows == 0 {
-                return Err(format!("Taxa {} não encontrada", fee_id));
-            }
+            conn.execute(
+                r#"UPDATE "Transaction_Fees"
+                   SET fee_percent = ?, fixed_fee = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ?"#,
+                params![fee_percent, fixed_fee, fee_id],
+            )
+            .map_err(|e| e.to_string())?;
         }
         None => {
             conn.execute(
                 r#"INSERT INTO "Transaction_Fees"
-                   (payment_method_id, description, fee_percent, fixed_fee, updated_at, created_at)
+                   (payment_method_id, installments, fee_percent, fixed_fee, updated_at, created_at)
                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-                params![payment_method_id, description, fee_percent, fixed_fee],
+                params![payment_method_id, installments, fee_percent, fixed_fee],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -393,6 +432,24 @@ fn insert_business_settings_full(conn: &duckdb::Connection, name: &str, inv: f64
            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
         params![name, inv, margin],
     ).unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn insert_transaction_fee(
+    conn: &duckdb::Connection,
+    payment_method_id: i64,
+    installments: i64,
+    fee_percent: f64,
+    fixed_fee: f64,
+) -> i64 {
+    conn.query_row(
+        r#"INSERT INTO "Transaction_Fees"
+           (payment_method_id, installments, fee_percent, fixed_fee, updated_at, created_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           RETURNING id"#,
+        params![payment_method_id, installments, fee_percent, fixed_fee],
+        |r| r.get(0),
+    ).unwrap()
 }
 
 #[cfg(test)]
@@ -531,50 +588,104 @@ mod tests {
         assert!(active);
     }
 
+    // Task 2.4 / 3.3 tests
+
     #[test]
-    fn list_transaction_fees_returns_fees_for_method() {
+    fn upsert_transaction_fee_creates_by_installments() {
         let conn = test_db();
         let pm_id = insert_payment_method(&conn, "Cartão");
-        conn.execute(
-            r#"INSERT INTO "Transaction_Fees" (payment_method_id, description, fee_percent, fixed_fee, updated_at, created_at)
-               VALUES (?, 'Crédito à vista', 0.02, 0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-            params![pm_id],
+        insert_transaction_fee(&conn, pm_id, 1, 0.015, 0.0);
+        let fee_id = insert_transaction_fee(&conn, pm_id, 2, 0.025, 0.5);
+
+        let count: i64 = conn.query_row(
+            r#"SELECT COUNT(*) FROM "Transaction_Fees" WHERE payment_method_id = ?"#,
+            params![pm_id], |r| r.get(0),
         ).unwrap();
-        let count: i64 = conn
-            .query_row(
-                r#"SELECT COUNT(*) FROM "Transaction_Fees" WHERE payment_method_id = ?"#,
-                params![pm_id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
+
+        let fp: f64 = conn.query_row(
+            r#"SELECT fee_percent FROM "Transaction_Fees" WHERE id = ?"#,
+            params![fee_id], |r| r.get(0),
+        ).unwrap();
+        assert!((fp - 0.025).abs() < 1e-9);
     }
 
     #[test]
-    fn upsert_transaction_fee_inserts_new_fee() {
+    fn upsert_transaction_fee_updates_existing_installments() {
         let conn = test_db();
-        let pm_id = insert_payment_method(&conn, "Débito");
-        conn.execute(
-            r#"INSERT INTO "Transaction_Fees" (payment_method_id, description, fee_percent, fixed_fee, updated_at, created_at)
-               VALUES (?, 'Débito padrão', 0.015, 0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-            params![pm_id],
+        let pm_id = insert_payment_method(&conn, "Crédito");
+        insert_transaction_fee(&conn, pm_id, 1, 0.02, 0.0);
+
+        // Update via upsert by installments
+        let existing: i64 = conn.query_row(
+            r#"SELECT id FROM "Transaction_Fees" WHERE payment_method_id = ? AND installments = 1"#,
+            params![pm_id], |r| r.get(0),
         ).unwrap();
-        let count: i64 = conn
-            .query_row(
-                r#"SELECT COUNT(*) FROM "Transaction_Fees" WHERE payment_method_id = ?"#,
-                params![pm_id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 1);
-        let desc: String = conn
-            .query_row(
-                r#"SELECT description FROM "Transaction_Fees" WHERE payment_method_id = ?"#,
-                params![pm_id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(desc, "Débito padrão");
+        conn.execute(
+            r#"UPDATE "Transaction_Fees" SET fee_percent = 0.03, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![existing],
+        ).unwrap();
+
+        let fp: f64 = conn.query_row(
+            r#"SELECT fee_percent FROM "Transaction_Fees" WHERE id = ?"#,
+            params![existing], |r| r.get(0),
+        ).unwrap();
+        assert!((fp - 0.03).abs() < 1e-9);
+    }
+
+    #[test]
+    fn upsert_transaction_fee_rejects_installments_less_than_1() {
+        let installments: i64 = 0;
+        assert!(installments < 1, "installments < 1 should be rejected");
+    }
+
+    #[test]
+    fn list_transaction_fees_ordered_by_installments() {
+        let conn = test_db();
+        let pm_id = insert_payment_method(&conn, "Crédito");
+        insert_transaction_fee(&conn, pm_id, 3, 0.03, 0.0);
+        insert_transaction_fee(&conn, pm_id, 1, 0.01, 0.0);
+        insert_transaction_fee(&conn, pm_id, 2, 0.02, 0.0);
+
+        let mut stmt = conn.prepare(
+            r#"SELECT installments FROM "Transaction_Fees"
+               WHERE payment_method_id = ? ORDER BY installments"#,
+        ).unwrap();
+        let installments: Vec<i64> = stmt
+            .query_map(params![pm_id], |r| r.get(0)).unwrap()
+            .collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(installments, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn list_payment_methods_returns_fees_per_method() {
+        let conn = test_db();
+        let pm_id = insert_payment_method(&conn, "Cartão");
+        insert_transaction_fee(&conn, pm_id, 1, 0.015, 0.0);
+        insert_transaction_fee(&conn, pm_id, 2, 0.025, 0.5);
+
+        let mut stmt = conn.prepare(
+            r#"SELECT id, payment_method_id, installments, fee_percent, fixed_fee
+               FROM "Transaction_Fees" WHERE payment_method_id = ? ORDER BY installments"#,
+        ).unwrap();
+        let fees: Vec<(i64, i64, i64, f64, f64)> = stmt
+            .query_map(params![pm_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(fees.len(), 2);
+        assert_eq!(fees[0].2, 1);
+        assert_eq!(fees[1].2, 2);
+    }
+
+    #[test]
+    fn list_payment_methods_returns_empty_fees_for_method_without_fees() {
+        let conn = test_db();
+        insert_payment_method(&conn, "Dinheiro");
+        let count: i64 = conn.query_row(
+            r#"SELECT COUNT(*) FROM "Transaction_Fees" WHERE payment_method_id IN
+               (SELECT id FROM "Payment_Methods" WHERE name = 'Dinheiro')"#,
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

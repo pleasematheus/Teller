@@ -23,6 +23,7 @@ pub struct SaleRow {
 pub struct SalePaymentInput {
     pub payment_method_id: i64,
     pub amount_paid: f64,
+    pub installments: i64,
 }
 
 #[derive(Serialize)]
@@ -253,23 +254,27 @@ pub fn do_close_sale_work(
     }
 
     for payment in payments {
-        let fee_percent: f64 = conn
+        // Task 5.2/5.3: look up fee by (payment_method_id, installments); default 0 if not found
+        let (fee_percent, fixed_fee): (f64, f64) = conn
             .query_row(
-                r#"SELECT COALESCE(MAX(fee_percent), 0.0)
-                   FROM "Transaction_Fees"
-                   WHERE payment_method_id = ?"#,
-                params![payment.payment_method_id],
-                |row| row.get(0),
+                r#"SELECT fee_percent, fixed_fee FROM "Transaction_Fees"
+                   WHERE payment_method_id = ? AND installments = ?"#,
+                params![payment.payment_method_id, payment.installments],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .unwrap_or(0.0);
+            .unwrap_or((0.0, 0.0));
 
-        let net_amount = payment.amount_paid * (1.0 - fee_percent);
+        let net_amount = payment.amount_paid * (1.0 - fee_percent) - fixed_fee;
 
         conn.execute(
             r#"INSERT INTO "Sale_Payments"
-               (sale_id, payment_method_id, amount_paid, net_amount, created_at)
-               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
-            params![sale_id, payment.payment_method_id, payment.amount_paid, net_amount],
+               (sale_id, payment_method_id, amount_paid, net_amount,
+                applied_fee_percent, applied_fixed_fee, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
+            params![
+                sale_id, payment.payment_method_id, payment.amount_paid, net_amount,
+                fee_percent, fixed_fee
+            ],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -451,7 +456,7 @@ mod tests {
     use super::*;
     use crate::db::test_db;
     use crate::products::insert_product;
-    use crate::settings::insert_payment_method;
+    use crate::settings::{insert_payment_method, insert_transaction_fee};
     use crate::auth::insert_user;
     use crate::stock::add_product_component_in_test;
 
@@ -532,7 +537,7 @@ mod tests {
             params![sale_id, insumo_id],
         ).unwrap();
 
-        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
         do_close_sale_work(&conn, sale_id, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
@@ -580,7 +585,7 @@ mod tests {
             params![sale_id, foto_id],
         ).unwrap();
 
-        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
         let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
@@ -624,7 +629,7 @@ mod tests {
             params![sale_id, product_id],
         ).unwrap();
 
-        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
         do_close_sale_work(&conn, sale_id, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
@@ -661,7 +666,7 @@ mod tests {
             params![sale_id, foto_id],
         ).unwrap();
 
-        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
         let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
@@ -681,5 +686,131 @@ mod tests {
             |r| r.get(0),
         ).unwrap();
         assert!((consumed - 1.0).abs() < 1e-9);
+    }
+
+    // Task 5.4 tests
+
+    #[test]
+    fn close_sale_net_amount_with_fee_percent_and_fixed() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let product_id = insert_product(&conn, "Foto", true);
+        let pm_id = insert_payment_method(&conn, "Cartão");
+
+        // Fee: 2% + R$0.50 fixed for installment 1
+        insert_transaction_fee(&conn, pm_id, 1, 0.02, 0.50);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 100.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 100.0, 0.0, 100.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 100.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let (net, fee_pct, fixed): (f64, f64, f64) = conn.query_row(
+            r#"SELECT net_amount, applied_fee_percent, applied_fixed_fee
+               FROM "Sale_Payments" WHERE sale_id = ?"#,
+            params![sale_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+
+        // net = 100 * (1 - 0.02) - 0.50 = 98.0 - 0.5 = 97.5
+        assert!((net - 97.5).abs() < 1e-6, "net_amount should be 97.5, got {}", net);
+        assert!((fee_pct - 0.02).abs() < 1e-9);
+        assert!((fixed - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn close_sale_split_with_different_installments() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let product_id = insert_product(&conn, "Foto", true);
+        let pm_id = insert_payment_method(&conn, "Crédito");
+
+        conn.execute(
+            r#"INSERT INTO "Transaction_Fees" (payment_method_id, installments, fee_percent, fixed_fee, updated_at, created_at)
+               VALUES (?, 1, 0.01, 0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![pm_id],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Transaction_Fees" (payment_method_id, installments, fee_percent, fixed_fee, updated_at, created_at)
+               VALUES (?, 3, 0.03, 0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![pm_id],
+        ).unwrap();
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 200.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 200.0, 0.0, 200.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let payments = vec![
+            SalePaymentInput { payment_method_id: pm_id, amount_paid: 100.0, installments: 1 },
+            SalePaymentInput { payment_method_id: pm_id, amount_paid: 100.0, installments: 3 },
+        ];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let nets: Vec<f64> = {
+            let mut stmt = conn.prepare(
+                r#"SELECT net_amount FROM "Sale_Payments" WHERE sale_id = ? ORDER BY created_at"#,
+            ).unwrap();
+            stmt.query_map(params![sale_id], |r| r.get(0)).unwrap()
+                .collect::<Result<Vec<_>, _>>().unwrap()
+        };
+        // 100 * (1 - 0.01) = 99.0 and 100 * (1 - 0.03) = 97.0
+        assert!((nets[0] - 99.0).abs() < 1e-6, "first net should be 99.0, got {}", nets[0]);
+        assert!((nets[1] - 97.0).abs() < 1e-6, "second net should be 97.0, got {}", nets[1]);
+    }
+
+    #[test]
+    fn close_sale_method_without_fee_preserves_full_amount() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let product_id = insert_product(&conn, "Foto", true);
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+
+        // No fees for this method
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 50.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 50.0, 0.0, 50.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 50.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let net: f64 = conn.query_row(
+            r#"SELECT net_amount FROM "Sale_Payments" WHERE sale_id = ?"#,
+            params![sale_id], |r| r.get(0),
+        ).unwrap();
+        assert!((net - 50.0).abs() < 1e-6, "no fee → net_amount = amount_paid = 50.0, got {}", net);
     }
 }

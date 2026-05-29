@@ -33,13 +33,12 @@ type ProductForDiscount = {
 export function computeMaxDiscount(
   product: ProductForDiscount,
   rates: PricingRates,
-  maxFeePct: number,
 ): { maxDiscountValue: number; maxDiscountPct: number } {
   if (product.expected_loss_rate >= 1 || product.final_price <= 0) {
     return { maxDiscountValue: 0, maxDiscountPct: 0 }
   }
   const cmv = product.cost_price / (1 - product.expected_loss_rate)
-  const floor = cmv + (rates.cv + rates.df + maxFeePct) * product.final_price
+  const floor = cmv + (rates.cv + rates.df) * product.final_price
   const maxDiscountValue = Math.max(0, product.final_price - floor)
   const maxDiscountPct = maxDiscountValue / product.final_price
   return { maxDiscountValue, maxDiscountPct }

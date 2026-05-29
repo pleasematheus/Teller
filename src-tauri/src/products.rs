@@ -93,8 +93,37 @@ pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> 
         )
         .unwrap_or(0.0);
 
+    // Task 4.1: "card" = method with at least one Transaction_Fee with fee_percent > 0 or fixed_fee > 0
+    // Task 4.2: add SUM(amount_paid - net_amount) from card payments in last 12 months to cv numerator
+    let card_fee_sum: f64 = conn
+        .query_row(
+            r#"SELECT COALESCE(SUM(sp.amount_paid - sp.net_amount), 0.0)
+               FROM "Sale_Payments" sp
+               WHERE sp.payment_method_id IN (
+                   SELECT DISTINCT payment_method_id FROM "Transaction_Fees"
+                   WHERE fee_percent > 0 OR fixed_fee > 0
+               )
+               AND sp.created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    // Task 4.3: fallback — when no card history, use MAX configured fee as conservative estimate
+    let card_cv: f64 = if card_fee_sum > 0.0 {
+        card_fee_sum / faturamento_ref
+    } else {
+        conn.query_row(
+            r#"SELECT COALESCE(MAX(fee_percent), 0.0) FROM "Transaction_Fees"
+               WHERE fee_percent > 0"#,
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0)
+    };
+
     Ok(PricingRates {
-        cv: cv_total / faturamento_ref,
+        cv: (cv_total / faturamento_ref) + card_cv,
         df: df_total / faturamento_ref,
         investment_rate,
         profit_margin,
@@ -493,7 +522,7 @@ mod tests {
         conn.execute(
             r#"INSERT INTO "Financial_Entries"
                (type, name, category, amount, is_fixed, updated_at, created_at)
-               VALUES ('expense', 'Taxa cartão', 'variavel', 100.0, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+               VALUES ('expense', 'Insumo', 'variavel', 100.0, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
         ).unwrap();
         conn.execute(
@@ -519,8 +548,165 @@ mod tests {
                    WHERE created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
                 [], |r| r.get(0),
             ).unwrap();
+        // No card fees configured, so card_cv = 0
         assert!((cv / fat - 0.1).abs() < 1e-9);
         assert!((df / fat - 0.2).abs() < 1e-9);
+    }
+
+    // Task 4.4 tests
+
+    #[test]
+    fn pricing_rates_cv_includes_card_fees_from_history() {
+        use crate::settings::insert_payment_method;
+        let conn = test_db();
+        insert_business_settings(&conn, "Empresa");
+        conn.execute(
+            r#"INSERT INTO "Users" (name, nickname, password_hash, active, updated_at, created_at)
+               VALUES ('u', 'u', 'h', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+
+        let pm_id = insert_payment_method(&conn, "Cartão");
+        // Card method with a fee
+        conn.execute(
+            r#"INSERT INTO "Transaction_Fees" (payment_method_id, installments, fee_percent, fixed_fee, updated_at, created_at)
+               VALUES (?, 1, 0.02, 0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![pm_id],
+        ).unwrap();
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
+               VALUES (?, 'closed', 500.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+
+        // amount_paid = 100, net_amount = 98 (2% fee retained)
+        conn.execute(
+            r#"INSERT INTO "Sale_Payments" (sale_id, payment_method_id, amount_paid, net_amount, created_at)
+               VALUES (?, ?, 100.0, 98.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, pm_id],
+        ).unwrap();
+
+        let card_fee_sum: f64 = conn.query_row(
+            r#"SELECT COALESCE(SUM(amount_paid - net_amount), 0.0)
+               FROM "Sale_Payments"
+               WHERE payment_method_id IN (
+                   SELECT DISTINCT payment_method_id FROM "Transaction_Fees" WHERE fee_percent > 0
+               )
+               AND created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
+            [], |r| r.get(0),
+        ).unwrap();
+        let fat: f64 = conn.query_row(
+            r#"SELECT COALESCE(SUM(total_value), 0.0) FROM "Sales"
+               WHERE created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
+            [], |r| r.get(0),
+        ).unwrap();
+
+        // card_cv = 2.0 / 500.0 = 0.004
+        let card_cv = card_fee_sum / fat;
+        assert!((card_cv - 0.004).abs() < 1e-9, "card_cv should be 0.004, got {}", card_cv);
+    }
+
+    #[test]
+    fn pricing_rates_fallback_uses_max_fee_when_no_card_history() {
+        use crate::settings::insert_payment_method;
+        let conn = test_db();
+        insert_business_settings(&conn, "Empresa");
+        conn.execute(
+            r#"INSERT INTO "Users" (name, nickname, password_hash, active, updated_at, created_at)
+               VALUES ('u', 'u', 'h', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+
+        let pm_id = insert_payment_method(&conn, "Cartão");
+        conn.execute(
+            r#"INSERT INTO "Transaction_Fees" (payment_method_id, installments, fee_percent, fixed_fee, updated_at, created_at)
+               VALUES (?, 1, 0.025, 0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![pm_id],
+        ).unwrap();
+
+        // Sales exist (faturamento > 0) but no card payments
+        let pix_pm_id = insert_payment_method(&conn, "Pix");
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
+               VALUES (?, 'closed', 400.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sale_Payments" (sale_id, payment_method_id, amount_paid, net_amount, created_at)
+               VALUES (?, ?, 400.0, 400.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, pix_pm_id],
+        ).unwrap();
+
+        // No card payments → fallback = MAX(fee_percent) = 0.025
+        let card_fee_sum: f64 = conn.query_row(
+            r#"SELECT COALESCE(SUM(amount_paid - net_amount), 0.0)
+               FROM "Sale_Payments"
+               WHERE payment_method_id IN (
+                   SELECT DISTINCT payment_method_id FROM "Transaction_Fees" WHERE fee_percent > 0
+               )
+               AND created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(card_fee_sum, 0.0, "no card payments, sum should be 0");
+
+        let max_fee: f64 = conn.query_row(
+            r#"SELECT COALESCE(MAX(fee_percent), 0.0) FROM "Transaction_Fees" WHERE fee_percent > 0"#,
+            [], |r| r.get(0),
+        ).unwrap();
+        assert!((max_fee - 0.025).abs() < 1e-9, "fallback should be max fee 0.025");
+    }
+
+    #[test]
+    fn pricing_rates_no_card_no_fees_card_cv_is_zero() {
+        let conn = test_db();
+        insert_business_settings(&conn, "Empresa");
+        conn.execute(
+            r#"INSERT INTO "Users" (name, nickname, password_hash, active, updated_at, created_at)
+               VALUES ('u', 'u', 'h', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+
+        // No Transaction_Fees at all (Pix/dinheiro methods)
+        let pm_id: i64 = conn.query_row(
+            r#"INSERT INTO "Payment_Methods" (name, active, updated_at, created_at)
+               VALUES ('Dinheiro', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            [], |r| r.get(0),
+        ).unwrap();
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
+               VALUES (?, 'closed', 200.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sale_Payments" (sale_id, payment_method_id, amount_paid, net_amount, created_at)
+               VALUES (?, ?, 200.0, 200.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, pm_id],
+        ).unwrap();
+
+        let card_fee_sum: f64 = conn.query_row(
+            r#"SELECT COALESCE(SUM(amount_paid - net_amount), 0.0)
+               FROM "Sale_Payments"
+               WHERE payment_method_id IN (
+                   SELECT DISTINCT payment_method_id FROM "Transaction_Fees" WHERE fee_percent > 0
+               )
+               AND created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
+            [], |r| r.get(0),
+        ).unwrap();
+        let max_fee: f64 = conn.query_row(
+            r#"SELECT COALESCE(MAX(fee_percent), 0.0) FROM "Transaction_Fees" WHERE fee_percent > 0"#,
+            [], |r| r.get(0),
+        ).unwrap();
+
+        assert_eq!(card_fee_sum, 0.0);
+        assert_eq!(max_fee, 0.0, "no fees configured, max_fee should be 0");
     }
 
     #[test]

@@ -294,6 +294,7 @@ mod tests {
         let payments = vec![SalePaymentInput {
             payment_method_id: pm_id,
             amount_paid: 20.0,
+            installments: 1,
         }];
         conn.execute_batch("BEGIN").unwrap();
         do_close_sale_work(&conn, sale_id, &payments).unwrap();

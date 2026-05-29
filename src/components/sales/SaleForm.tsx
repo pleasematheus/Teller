@@ -26,12 +26,11 @@ type Props = {
   sale: Sale | null
   products: Product[]
   rates: PricingRates
-  maxFeePct: number
   onCancel: () => void
   onSaved: () => void
 }
 
-export function SaleForm({ sale, products, rates, maxFeePct, onCancel, onSaved }: Props) {
+export function SaleForm({ sale, products, rates, onCancel, onSaved }: Props) {
   const isEdit = sale !== null
 
   const [label, setLabel] = useState(sale?.label ?? "")
@@ -229,7 +228,6 @@ export function SaleForm({ sale, products, rates, maxFeePct, onCancel, onSaved }
               const { maxDiscountValue, maxDiscountPct } = computeMaxDiscount(
                 { cost_price: item.cost_price, expected_loss_rate: item.expected_loss_rate, final_price: item.final_price },
                 rates,
-                maxFeePct,
               )
               const discountedPrice = item.final_price * (1 - item.discount)
               const floorPrice = item.final_price - maxDiscountValue

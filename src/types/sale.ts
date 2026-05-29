@@ -23,11 +23,20 @@ export interface SaleItemInput {
 export interface SalePaymentInput {
   payment_method_id: number
   amount_paid: number
+  installments: number
+}
+
+export interface TransactionFee {
+  id: number
+  payment_method_id: number
+  installments: number
+  fee_percent: number
+  fixed_fee: number
 }
 
 export interface PaymentMethod {
   id: number
   name: string
-  max_fee_percent: number
   active: boolean
+  fees: TransactionFee[]
 }

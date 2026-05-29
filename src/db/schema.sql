@@ -158,22 +158,26 @@ CREATE SEQUENCE IF NOT EXISTS transaction_fees_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Transaction_Fees" (
     "id"                INTEGER       DEFAULT nextval('transaction_fees_id_seq') PRIMARY KEY,
     "payment_method_id" INTEGER       NOT NULL,
-    "description"       VARCHAR       NOT NULL,
-    "fee_percent"       DECIMAL(5,4)  NOT NULL,
-    "fixed_fee"         DECIMAL(10,2) NOT NULL,
+    "installments"      INTEGER       NOT NULL DEFAULT 1,
+    "description"       VARCHAR,
+    "fee_percent"       DOUBLE        NOT NULL,
+    "fixed_fee"         DOUBLE        NOT NULL,
     "updated_at"        TIMESTAMP     NOT NULL,
     "created_at"        TIMESTAMP     NOT NULL,
-    FOREIGN KEY ("payment_method_id") REFERENCES "Payment_Methods" ("id")
+    FOREIGN KEY ("payment_method_id") REFERENCES "Payment_Methods" ("id"),
+    UNIQUE ("payment_method_id", "installments")
 );
 
 CREATE SEQUENCE IF NOT EXISTS sale_payments_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Sale_Payments" (
-    "id"                INTEGER       DEFAULT nextval('sale_payments_id_seq') PRIMARY KEY,
-    "sale_id"           INTEGER       NOT NULL,
-    "payment_method_id" INTEGER       NOT NULL,
-    "amount_paid"       DECIMAL(10,2) NOT NULL,
-    "net_amount"        DECIMAL(10,2) NOT NULL,
-    "created_at"        TIMESTAMP     NOT NULL,
+    "id"                  INTEGER       DEFAULT nextval('sale_payments_id_seq') PRIMARY KEY,
+    "sale_id"             INTEGER       NOT NULL,
+    "payment_method_id"   INTEGER       NOT NULL,
+    "amount_paid"         DECIMAL(10,2) NOT NULL,
+    "net_amount"          DOUBLE        NOT NULL,
+    "applied_fee_percent" DOUBLE        NOT NULL DEFAULT 0,
+    "applied_fixed_fee"   DOUBLE        NOT NULL DEFAULT 0,
+    "created_at"          TIMESTAMP     NOT NULL,
     FOREIGN KEY ("sale_id")           REFERENCES "Sales"           ("id"),
     FOREIGN KEY ("payment_method_id") REFERENCES "Payment_Methods" ("id")
 );

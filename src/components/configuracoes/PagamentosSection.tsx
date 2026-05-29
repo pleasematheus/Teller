@@ -9,21 +9,20 @@ import { Input } from "@/components/ui/input";
 type PaymentMethod = {
   id: number;
   name: string;
-  max_fee_percent: number;
   active: boolean;
+  fees: TransactionFee[];
 };
 
 type TransactionFee = {
   id: number;
   payment_method_id: number;
-  description: string;
+  installments: number;
   fee_percent: number;
   fixed_fee: number;
 };
 
 type FeeRow = {
-  id: number | null;
-  description: string;
+  installments: string;
   fee_percent: string;
   fixed_fee: string;
 };
@@ -35,8 +34,7 @@ const inputClass =
 
 function toFeeRow(fee: TransactionFee): FeeRow {
   return {
-    id: fee.id,
-    description: fee.description,
+    installments: String(fee.installments),
     fee_percent: String(Math.round(fee.fee_percent * 10000) / 100),
     fixed_fee: String(fee.fixed_fee.toFixed(2)),
   };
@@ -52,6 +50,7 @@ export function PagamentosSection() {
   const [editingMethod, setEditingMethod] = useState<PaymentMethod | null>(null);
   const [editName, setEditName] = useState("");
   const [editNameError, setEditNameError] = useState<string | null>(null);
+  const [feesEnabled, setFeesEnabled] = useState(false);
   const [feeRows, setFeeRows] = useState<FeeRow[]>([]);
   const [loadingFees, setLoadingFees] = useState(false);
   const [savingFees, setSavingFees] = useState(false);
@@ -94,6 +93,7 @@ export function PagamentosSection() {
       const fees = await invoke<TransactionFee[]>("list_transaction_fees", {
         paymentMethodId: method.id,
       });
+      setFeesEnabled(fees.length > 0);
       setFeeRows(fees.map(toFeeRow));
     } finally {
       setLoadingFees(false);
@@ -101,12 +101,17 @@ export function PagamentosSection() {
   };
 
   const handleAddFeeRow = () => {
-    setFeeRows((prev) => [...prev, { id: null, description: "", fee_percent: "", fixed_fee: "" }]);
+    setFeeRows((prev) => [...prev, { installments: "", fee_percent: "", fixed_fee: "" }]);
+  };
+
+  const handleRemoveFeeRow = (idx: number) => {
+    setFeeRows((prev) => prev.filter((_, i) => i !== idx));
+    setFeeError(null);
   };
 
   const handleFeeChange = (
     idx: number,
-    field: keyof Omit<FeeRow, "id">
+    field: keyof FeeRow
   ) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setFeeRows((prev) =>
       prev.map((row, i) => (i === idx ? { ...row, [field]: e.target.value } : row))
@@ -118,6 +123,22 @@ export function PagamentosSection() {
     if (!editingMethod) return;
     const trimmedName = editName.trim();
     if (!trimmedName) { setEditNameError("Nome é obrigatório"); return; }
+
+    for (const row of feeRows) {
+      const installments = parseInt(row.installments, 10);
+      if (!row.installments.trim() || isNaN(installments) || installments < 1) {
+        setFeeError("Número de parcelas deve ser >= 1");
+        return;
+      }
+    }
+
+    // Check for duplicate installments within the form
+    const installmentValues = feeRows.map((r) => parseInt(r.installments, 10));
+    if (new Set(installmentValues).size !== installmentValues.length) {
+      setFeeError("Número de parcelas duplicado");
+      return;
+    }
+
     setSavingFees(true);
     setFeeError(null);
     setEditNameError(null);
@@ -125,18 +146,15 @@ export function PagamentosSection() {
       if (trimmedName !== editingMethod.name) {
         await invoke("rename_payment_method", { id: editingMethod.id, name: trimmedName });
       }
-      for (const row of feeRows) {
-        if (!row.description.trim()) {
-          setFeeError("Todos os campos de descrição são obrigatórios");
-          return;
+      if (feesEnabled) {
+        for (const row of feeRows) {
+          await invoke("upsert_transaction_fee", {
+            paymentMethodId: editingMethod.id,
+            installments: parseInt(row.installments, 10),
+            feePercent: parseFloat(row.fee_percent || "0") / 100,
+            fixedFee: parseFloat(row.fixed_fee || "0"),
+          });
         }
-        await invoke("upsert_transaction_fee", {
-          id: row.id ?? null,
-          paymentMethodId: editingMethod.id,
-          description: row.description.trim(),
-          feePercent: parseFloat(row.fee_percent || "0") / 100,
-          fixedFee: parseFloat(row.fixed_fee || "0"),
-        });
       }
       setView("list");
       setEditingMethod(null);
@@ -218,6 +236,9 @@ export function PagamentosSection() {
                   onCheckedChange={() => handleToggle(method)}
                 />
                 <span className="flex-1 text-sm text-teller-text">{method.name}</span>
+                {method.fees.length > 0 && (
+                  <span className="text-xs text-teller-muted">{method.fees.length}x</span>
+                )}
                 <button
                   onClick={() => handleOpenEdit(method)}
                   className="text-xs text-teller-secondary hover:text-teller-text cursor-pointer transition-colors"
@@ -287,7 +308,7 @@ export function PagamentosSection() {
   return (
     <div className="max-w-lg">
       <button
-        onClick={() => { setView("list"); setEditingMethod(null); setFeeRows([]); }}
+        onClick={() => { setView("list"); setEditingMethod(null); setFeeRows([]); setFeesEnabled(false); }}
         className="flex items-center gap-1.5 text-teller-secondary hover:text-teller-text text-xs mb-6 cursor-pointer transition-colors"
       >
         <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={1.5} className="size-3.5" />
@@ -306,26 +327,42 @@ export function PagamentosSection() {
         {editNameError && <p className="text-teller-danger text-xs">{editNameError}</p>}
       </div>
 
-      <p className="text-teller-muted text-xs mb-4">Taxas de transação</p>
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-teller-secondary text-xs font-medium">Cobra taxas de cartão</span>
+        <Switch
+          size="sm"
+          checked={feesEnabled}
+          disabled={loadingFees || savingFees || deleting}
+          onCheckedChange={(checked) => {
+            setFeesEnabled(checked);
+            if (!checked) setFeeRows([]);
+            setFeeError(null);
+          }}
+        />
+      </div>
 
       {loadingFees ? (
         <p className="text-teller-muted text-sm">Carregando...</p>
       ) : (
         <div className="flex flex-col gap-4">
-          {feeRows.length > 0 && (
+          {feesEnabled && feeRows.length > 0 && (
             <div className="flex flex-col gap-3">
-              <div className="grid grid-cols-[1fr_80px_80px] gap-2 px-1">
-                <span className="text-teller-muted text-xs font-medium">Descrição</span>
+              <div className="grid grid-cols-[60px_1fr_1fr_20px] gap-2 px-1">
+                <span className="text-teller-muted text-xs font-medium text-center">Parcelas</span>
                 <span className="text-teller-muted text-xs font-medium text-center">Taxa (%)</span>
                 <span className="text-teller-muted text-xs font-medium text-center">Fixo (R$)</span>
+                <span />
               </div>
               {feeRows.map((row, idx) => (
-                <div key={idx} className="grid grid-cols-[1fr_80px_80px] gap-2">
+                <div key={idx} className="grid grid-cols-[60px_1fr_1fr_20px] gap-2 items-center">
                   <Input
-                    value={row.description}
-                    onChange={handleFeeChange(idx, "description")}
-                    placeholder="Ex: Crédito à vista"
-                    className={inputClass}
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={row.installments}
+                    onChange={handleFeeChange(idx, "installments")}
+                    placeholder="1"
+                    className={`${inputClass} text-center`}
                   />
                   <Input
                     type="number"
@@ -346,17 +383,27 @@ export function PagamentosSection() {
                     placeholder="0,00"
                     className={`${inputClass} text-center`}
                   />
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveFeeRow(idx)}
+                    disabled={savingFees || deleting}
+                    className="text-teller-muted hover:text-teller-danger text-xs cursor-pointer transition-colors disabled:opacity-40"
+                  >
+                    ✕
+                  </button>
                 </div>
               ))}
             </div>
           )}
 
-          <button
-            onClick={handleAddFeeRow}
-            className="text-xs text-teller-secondary hover:text-teller-text cursor-pointer transition-colors text-left"
-          >
-            + Adicionar taxa
-          </button>
+          {feesEnabled && (
+            <button
+              onClick={handleAddFeeRow}
+              className="text-xs text-teller-secondary hover:text-teller-text cursor-pointer transition-colors text-left"
+            >
+              + Adicionar parcela
+            </button>
+          )}
 
           {feeError && <p className="text-teller-danger text-xs">{feeError}</p>}
           {deleteError && <p className="text-teller-danger text-xs">{deleteError}</p>}
@@ -396,7 +443,7 @@ export function PagamentosSection() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => { setView("list"); setEditingMethod(null); setFeeRows([]); }}
+                onClick={() => { setView("list"); setEditingMethod(null); setFeeRows([]); setFeesEnabled(false); }}
                 className="h-8 px-3 border-teller-border text-teller-secondary hover:text-teller-text text-xs cursor-pointer"
               >
                 Cancelar
