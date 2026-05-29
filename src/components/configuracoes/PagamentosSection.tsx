@@ -50,10 +50,15 @@ export function PagamentosSection() {
   const [newNameError, setNewNameError] = useState<string | null>(null);
   const [savingNew, setSavingNew] = useState(false);
   const [editingMethod, setEditingMethod] = useState<PaymentMethod | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editNameError, setEditNameError] = useState<string | null>(null);
   const [feeRows, setFeeRows] = useState<FeeRow[]>([]);
   const [loadingFees, setLoadingFees] = useState(false);
   const [savingFees, setSavingFees] = useState(false);
   const [feeError, setFeeError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadMethods = useCallback(() => {
     invoke<PaymentMethod[]>("list_payment_methods")
@@ -78,7 +83,11 @@ export function PagamentosSection() {
 
   const handleOpenEdit = async (method: PaymentMethod) => {
     setEditingMethod(method);
+    setEditName(method.name);
+    setEditNameError(null);
     setFeeError(null);
+    setConfirmingDelete(false);
+    setDeleteError(null);
     setLoadingFees(true);
     setView("form-edit");
     try {
@@ -107,9 +116,15 @@ export function PagamentosSection() {
 
   const handleSaveFees = async () => {
     if (!editingMethod) return;
+    const trimmedName = editName.trim();
+    if (!trimmedName) { setEditNameError("Nome é obrigatório"); return; }
     setSavingFees(true);
     setFeeError(null);
+    setEditNameError(null);
     try {
+      if (trimmedName !== editingMethod.name) {
+        await invoke("rename_payment_method", { id: editingMethod.id, name: trimmedName });
+      }
       for (const row of feeRows) {
         if (!row.description.trim()) {
           setFeeError("Todos os campos de descrição são obrigatórios");
@@ -125,10 +140,33 @@ export function PagamentosSection() {
       }
       setView("list");
       setEditingMethod(null);
+      loadMethods();
     } catch (err) {
-      setFeeError(typeof err === "string" ? err : "Erro ao salvar taxas");
+      const msg = typeof err === "string" ? err : "Erro ao salvar";
+      if (typeof err === "string" && err.toLowerCase().includes("nome")) {
+        setEditNameError(msg);
+      } else {
+        setFeeError(msg);
+      }
     } finally {
       setSavingFees(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!editingMethod) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await invoke("delete_payment_method", { id: editingMethod.id });
+      setView("list");
+      setEditingMethod(null);
+      loadMethods();
+    } catch (err) {
+      setDeleteError(typeof err === "string" ? err : "Erro ao excluir");
+      setConfirmingDelete(false);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -184,7 +222,7 @@ export function PagamentosSection() {
                   onClick={() => handleOpenEdit(method)}
                   className="text-xs text-teller-secondary hover:text-teller-text cursor-pointer transition-colors"
                 >
-                  Editar taxas
+                  Editar
                 </button>
               </div>
             ))}
@@ -244,7 +282,7 @@ export function PagamentosSection() {
     );
   }
 
-  // ── Edit fees form ───────────────────────────────────────────────────────────
+  // ── Edit form ────────────────────────────────────────────────────────────────
 
   return (
     <div className="max-w-lg">
@@ -255,10 +293,20 @@ export function PagamentosSection() {
         <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={1.5} className="size-3.5" />
         Voltar
       </button>
-      <h2 className="text-teller-text text-base font-semibold mb-1">
-        {editingMethod?.name}
-      </h2>
-      <p className="text-teller-muted text-xs mb-6">Taxas de transação</p>
+
+      <div className="flex flex-col gap-1.5 mb-6">
+        <label className="text-teller-secondary text-xs font-medium">Nome</label>
+        <Input
+          autoFocus
+          value={editName}
+          onChange={(e) => { setEditName(e.target.value); setEditNameError(null); }}
+          disabled={savingFees || deleting}
+          className={inputClass}
+        />
+        {editNameError && <p className="text-teller-danger text-xs">{editNameError}</p>}
+      </div>
+
+      <p className="text-teller-muted text-xs mb-4">Taxas de transação</p>
 
       {loadingFees ? (
         <p className="text-teller-muted text-sm">Carregando...</p>
@@ -311,25 +359,57 @@ export function PagamentosSection() {
           </button>
 
           {feeError && <p className="text-teller-danger text-xs">{feeError}</p>}
+          {deleteError && <p className="text-teller-danger text-xs">{deleteError}</p>}
 
-          <div className="flex gap-2 justify-end mt-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => { setView("list"); setEditingMethod(null); setFeeRows([]); }}
-              className="h-8 px-3 border-teller-border text-teller-secondary hover:text-teller-text text-xs cursor-pointer"
-            >
-              Cancelar
-            </Button>
-            <Button
-              size="sm"
-              disabled={savingFees}
-              onClick={handleSaveFees}
-              className="h-8 px-3 bg-teller-accent hover:bg-teller-accent-hover text-teller-bg text-xs font-semibold cursor-pointer disabled:opacity-50"
-            >
-              {savingFees ? "Salvando..." : "Salvar"}
-            </Button>
+          <div className="flex gap-2 justify-between mt-2">
+            <div>
+              {!confirmingDelete ? (
+                <button
+                  onClick={() => { setConfirmingDelete(true); setDeleteError(null); }}
+                  disabled={savingFees || deleting}
+                  className="text-xs text-teller-danger hover:opacity-80 cursor-pointer transition-opacity disabled:opacity-40"
+                >
+                  Excluir
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleDeleteConfirm}
+                    disabled={deleting}
+                    className="text-xs text-teller-danger hover:opacity-80 cursor-pointer transition-opacity disabled:opacity-40 font-medium"
+                  >
+                    {deleting ? "Excluindo..." : "Confirmar exclusão"}
+                  </button>
+                  <button
+                    onClick={() => { setConfirmingDelete(false); setDeleteError(null); }}
+                    disabled={deleting}
+                    className="text-xs text-teller-secondary hover:text-teller-text cursor-pointer transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => { setView("list"); setEditingMethod(null); setFeeRows([]); }}
+                className="h-8 px-3 border-teller-border text-teller-secondary hover:text-teller-text text-xs cursor-pointer"
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                disabled={savingFees || deleting}
+                onClick={handleSaveFees}
+                className="h-8 px-3 bg-teller-accent hover:bg-teller-accent-hover text-teller-bg text-xs font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {savingFees ? "Salvando..." : "Salvar"}
+              </Button>
+            </div>
           </div>
         </div>
       )}
