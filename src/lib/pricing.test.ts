@@ -69,39 +69,39 @@ describe("computePrice", () => {
 
 describe("computeMaxDiscount", () => {
   // cost=80, loss=0.2 → cmv = 80/0.8 = 100
-  // floor = 100 + (cv+df+maxFeePct)*final_price = 100 + 0.2*200 = 140
-  // maxDiscount = 200-140=60, pct=0.3
   const product = { cost_price: 80, expected_loss_rate: 0.2, final_price: 200 }
 
-  it("calcula desconto máximo corretamente", () => {
-    const result = computeMaxDiscount(product, zeroRates, 0.2)
-    expect(result.maxDiscountValue).toBeCloseTo(60)
-    expect(result.maxDiscountPct).toBeCloseTo(0.3)
+  it("calcula desconto máximo com cv embutido (zeroRates)", () => {
+    // zeroRates: cv=0, df=0 → floor = 100 + 0*200 = 100 → maxDiscount = 200-100 = 100
+    const result = computeMaxDiscount(product, zeroRates)
+    expect(result.maxDiscountValue).toBeCloseTo(100)
+    expect(result.maxDiscountPct).toBeCloseTo(0.5)
   })
 
   it("retorna zeros para loss_rate >= 1", () => {
-    const result = computeMaxDiscount({ ...product, expected_loss_rate: 1 }, zeroRates, 0)
+    const result = computeMaxDiscount({ ...product, expected_loss_rate: 1 }, zeroRates)
     expect(result.maxDiscountValue).toBe(0)
     expect(result.maxDiscountPct).toBe(0)
   })
 
   it("retorna zeros para final_price <= 0", () => {
-    const result = computeMaxDiscount({ ...product, final_price: 0 }, zeroRates, 0)
+    const result = computeMaxDiscount({ ...product, final_price: 0 }, zeroRates)
     expect(result.maxDiscountValue).toBe(0)
     expect(result.maxDiscountPct).toBe(0)
   })
 
   it("retorna zero quando floor >= final_price", () => {
     // cost=200, loss=0 → cmv=200 = final_price → no room for discount
-    const result = computeMaxDiscount({ cost_price: 200, expected_loss_rate: 0, final_price: 200 }, zeroRates, 0)
+    const result = computeMaxDiscount({ cost_price: 200, expected_loss_rate: 0, final_price: 200 }, zeroRates)
     expect(result.maxDiscountValue).toBe(0)
   })
 
-  it("inclui taxas de rates no cálculo do piso", () => {
-    // cmv=100, floor = 100 + (0.1+0.05+0.03)*200 = 100+36=136, maxDiscount=64
-    const result = computeMaxDiscount(product, realRates, 0.03)
-    expect(result.maxDiscountValue).toBeCloseTo(64)
-    expect(result.maxDiscountPct).toBeCloseTo(64 / 200)
+  it("inclui cv e df do rates no cálculo do piso", () => {
+    // cmv=100, realRates: cv=0.1, df=0.05
+    // floor = 100 + (0.1+0.05)*200 = 100+30 = 130 → maxDiscount = 70
+    const result = computeMaxDiscount(product, realRates)
+    expect(result.maxDiscountValue).toBeCloseTo(70)
+    expect(result.maxDiscountPct).toBeCloseTo(70 / 200)
   })
 })
 

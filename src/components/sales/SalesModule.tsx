@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { SalesList } from "./SalesList"
 import { SaleForm } from "./SaleForm"
 import { SaleCloseForm } from "./SaleCloseForm"
-import type { Sale, PaymentMethod } from "@/types/sale"
+import type { Sale } from "@/types/sale"
 import type { Product, PricingRates } from "@/types/product"
 
 const DEFAULT_RATES: PricingRates = {
@@ -44,7 +44,6 @@ export function SalesModule() {
   const [closedSales, setClosedSales] = useState<Sale[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [rates, setRates] = useState<PricingRates>(DEFAULT_RATES)
-  const [maxFeePct, setMaxFeePct] = useState(0)
 
   const loadSales = useCallback(async () => {
     const [open, closed] = await Promise.all([
@@ -59,13 +58,6 @@ export function SalesModule() {
     loadSales()
     invoke<Product[]>("list_products").then(setProducts).catch(() => {})
     invoke<PricingRates>("get_pricing_rates").then(setRates).catch(() => {})
-    invoke<PaymentMethod[]>("list_payment_methods")
-      .then((ms) => {
-        const active = ms.filter((m) => m.active)
-        const max = active.reduce((m, x) => Math.max(m, x.max_fee_percent), 0)
-        setMaxFeePct(max)
-      })
-      .catch(() => {})
   }, [loadSales])
 
   const openNew = () => {
@@ -169,7 +161,6 @@ export function SalesModule() {
             sale={formContent.kind === "view-sale" ? formContent.sale : null}
             products={products}
             rates={rates}
-            maxFeePct={maxFeePct}
             onCancel={closeForm}
             onSaved={() => { loadSales(); closeForm() }}
           />

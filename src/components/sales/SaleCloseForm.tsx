@@ -8,6 +8,7 @@ const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" 
 
 type PaymentLine = {
   methodId: number
+  installments: number
   amount: string
 }
 
@@ -17,9 +18,17 @@ type Props = {
   onSaved: () => void
 }
 
+function computeNetAmount(amount: number, methodId: number, installments: number, methods: PaymentMethod[]): number {
+  const method = methods.find((m) => m.id === methodId)
+  if (!method) return amount
+  const fee = method.fees.find((f) => f.installments === installments)
+  if (!fee) return amount
+  return amount * (1 - fee.fee_percent) - fee.fixed_fee
+}
+
 export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
   const [methods, setMethods] = useState<PaymentMethod[]>([])
-  const [payments, setPayments] = useState<PaymentLine[]>([{ methodId: 0, amount: "" }])
+  const [payments, setPayments] = useState<PaymentLine[]>([{ methodId: 0, installments: 1, amount: "" }])
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
@@ -30,7 +39,7 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
         const active = ms.filter((m) => m.active)
         setMethods(active)
         if (active.length > 0) {
-          setPayments([{ methodId: active[0].id, amount: "" }])
+          setPayments([{ methodId: active[0].id, installments: 1, amount: "" }])
         }
       })
       .catch(() => {})
@@ -44,11 +53,24 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
     payments.every((p) => p.methodId > 0 && (parseFloat(p.amount) || 0) > 0)
 
   const updateLine = (idx: number, field: keyof PaymentLine, value: string | number) => {
-    setPayments((prev) => prev.map((p, i) => (i === idx ? { ...p, [field]: value } : p)))
+    setPayments((prev) =>
+      prev.map((p, i) => {
+        if (i !== idx) return p
+        if (field === "methodId") {
+          const method = methods.find((m) => m.id === value)
+          return { ...p, methodId: value as number, installments: method?.fees[0]?.installments ?? 1 }
+        }
+        return { ...p, [field]: value }
+      })
+    )
   }
 
   const addLine = () => {
-    setPayments((prev) => [...prev, { methodId: methods[0]?.id ?? 0, amount: "" }])
+    const firstMethod = methods[0]
+    setPayments((prev) => [
+      ...prev,
+      { methodId: firstMethod?.id ?? 0, installments: firstMethod?.fees[0]?.installments ?? 1, amount: "" },
+    ])
   }
 
   const removeLine = (idx: number) => {
@@ -62,6 +84,7 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
       const paymentInputs: SalePaymentInput[] = payments.map((p) => ({
         payment_method_id: p.methodId,
         amount_paid: parseFloat(p.amount) || 0,
+        installments: p.installments,
       }))
       const stockWarnings = await invoke<string[]>("close_sale", { id: sale.id, payments: paymentInputs })
       onSaved()
@@ -92,41 +115,70 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
         </div>
 
         {/* Payment lines */}
-        <div className="flex flex-col gap-2">
-          {payments.map((p, idx) => (
-            <div key={idx} className="flex gap-2 items-center">
-              <select
-                value={p.methodId}
-                onChange={(e) => updateLine(idx, "methodId", Number(e.target.value))}
-                className="flex h-10 rounded-md border border-teller-border bg-teller-card px-3 py-2 text-sm text-teller-text focus:outline-none focus:ring-2 focus:ring-teller-accent flex-1 min-w-0"
-              >
-                {methods.length === 0 && <option value={0}>Carregando...</option>}
-                {methods.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                placeholder="0,00"
-                value={p.amount}
-                onChange={(e) => updateLine(idx, "amount", e.target.value)}
-                className="w-32 shrink-0"
-              />
-              {payments.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeLine(idx)}
-                  className="text-teller-muted hover:text-red-500 text-sm px-1 shrink-0"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
+        <div className="flex flex-col gap-3">
+          {payments.map((p, idx) => {
+            const method = methods.find((m) => m.id === p.methodId)
+            const hasFees = (method?.fees.length ?? 0) > 0
+            const amountNum = parseFloat(p.amount) || 0
+            const netAmount = amountNum > 0 ? computeNetAmount(amountNum, p.methodId, p.installments, methods) : null
+
+            return (
+              <div key={idx} className="flex flex-col gap-1.5">
+                <div className="flex gap-2 items-center">
+                  <select
+                    value={p.methodId}
+                    onChange={(e) => updateLine(idx, "methodId", Number(e.target.value))}
+                    className="flex h-10 rounded-md border border-teller-border bg-teller-card px-3 py-2 text-sm text-teller-text focus:outline-none focus:ring-2 focus:ring-teller-accent flex-1 min-w-0"
+                  >
+                    {methods.length === 0 && <option value={0}>Carregando...</option>}
+                    {methods.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  {hasFees && (
+                    <select
+                      value={p.installments}
+                      onChange={(e) => updateLine(idx, "installments", Number(e.target.value))}
+                      className="flex h-10 rounded-md border border-teller-border bg-teller-card px-3 py-2 text-sm text-teller-text focus:outline-none focus:ring-2 focus:ring-teller-accent w-28 shrink-0"
+                    >
+                      {method?.fees.map((fee) => (
+                        <option key={fee.installments} value={fee.installments}>
+                          {fee.installments}x ({(fee.fee_percent * 100).toFixed(2)}%)
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="0,00"
+                    value={p.amount}
+                    onChange={(e) => updateLine(idx, "amount", e.target.value)}
+                    className="w-32 shrink-0"
+                  />
+                  {payments.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeLine(idx)}
+                      className="text-teller-muted hover:text-red-500 text-sm px-1 shrink-0"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                {hasFees && netAmount !== null && netAmount > 0 && (
+                  <p className="text-xs text-teller-muted pl-1">
+                    você recebe: {brl.format(netAmount)}
+                  </p>
+                )}
+              </div>
+            )
+          })}
         </div>
 
         <button
