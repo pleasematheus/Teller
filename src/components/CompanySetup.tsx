@@ -37,8 +37,8 @@ export function CompanySetup({ user, onComplete }: Props) {
     try {
       await invoke("create_business_settings", {
         name: form.name,
-        investmentRate: parseFloat(form.investmentRate) / 100,
-        profitMargin: parseFloat(form.profitMargin) / 100,
+        investmentRate: form.investmentRate !== "" ? parseFloat(form.investmentRate) / 100 : null,
+        profitMargin: form.profitMargin !== "" ? parseFloat(form.profitMargin) / 100 : null,
       });
       onComplete();
     } catch (err) {

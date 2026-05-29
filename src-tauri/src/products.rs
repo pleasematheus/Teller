@@ -49,7 +49,11 @@ pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> 
         .query_row(
             r#"SELECT investment_rate, profit_margin FROM "Business_Settings" LIMIT 1"#,
             [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| {
+                let ir: Option<f64> = row.get(0)?;
+                let pm: Option<f64> = row.get(1)?;
+                Ok((ir.unwrap_or(0.0), pm.unwrap_or(0.0)))
+            },
         )
         .unwrap_or((0.0, 0.0));
 

@@ -59,6 +59,25 @@ pub fn ensure_financial_entries_expense_subtype(conn: &Connection) -> Result<(),
     .map_err(|e| e.to_string())
 }
 
+pub fn ensure_business_settings_nullable(conn: &Connection) -> Result<(), String> {
+    // Idempotent: ignore errors (DuckDB may error if column is already nullable).
+    let _ = conn.execute_batch(
+        r#"ALTER TABLE "Business_Settings" ALTER COLUMN investment_rate DROP NOT NULL;
+           ALTER TABLE "Business_Settings" ALTER COLUMN profit_margin DROP NOT NULL;"#,
+    );
+    Ok(())
+}
+
+pub fn ensure_business_settings_double_type(conn: &Connection) -> Result<(), String> {
+    // duckdb-rs 1.4.4 cannot read DECIMAL(5,4) as f64 correctly (scale not applied).
+    // Migrate to DOUBLE which maps directly to f64. Idempotent: ignore errors.
+    let _ = conn.execute_batch(
+        r#"ALTER TABLE "Business_Settings" ALTER COLUMN investment_rate SET DATA TYPE DOUBLE;
+           ALTER TABLE "Business_Settings" ALTER COLUMN profit_margin SET DATA TYPE DOUBLE;"#,
+    );
+    Ok(())
+}
+
 pub fn init_schema(conn: &Connection) -> Result<(), String> {
     // execute_batch aborts DuckDB when objects already exist, even with IF NOT EXISTS.
     // Skip entirely if the schema was already initialized in a previous run.

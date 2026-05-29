@@ -15,8 +15,8 @@ CREATE SEQUENCE IF NOT EXISTS business_settings_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Business_Settings" (
     "id"              INTEGER      DEFAULT nextval('business_settings_id_seq') PRIMARY KEY,
     "name"            VARCHAR      NOT NULL,
-    "investment_rate" DECIMAL(5,4) NOT NULL DEFAULT 0,
-    "profit_margin"   DECIMAL(5,4) NOT NULL DEFAULT 0,
+    "investment_rate" DOUBLE,
+    "profit_margin"   DOUBLE,
     "updated_at"      TIMESTAMP    NOT NULL,
     "created_at"      TIMESTAMP    NOT NULL
 );
