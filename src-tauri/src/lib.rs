@@ -84,6 +84,8 @@ pub fn run() {
             settings::toggle_user_active,
             settings::create_payment_method,
             settings::update_payment_method,
+            settings::rename_payment_method,
+            settings::delete_payment_method,
             settings::list_transaction_fees,
             settings::upsert_transaction_fee,
             reports::get_dre,

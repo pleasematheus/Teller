@@ -235,6 +235,59 @@ pub fn update_payment_method(id: i64, active: bool, state: State<DbState>) -> Re
 }
 
 #[tauri::command]
+pub fn rename_payment_method(id: i64, name: String, state: State<DbState>) -> Result<(), String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Nome é obrigatório".to_string());
+    }
+
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let rows = conn
+        .execute(
+            r#"UPDATE "Payment_Methods" SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![name, id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if rows == 0 {
+        return Err(format!("Forma de pagamento {} não encontrada", id));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_payment_method(id: i64, state: State<DbState>) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let linked: i64 = conn
+        .query_row(
+            r#"SELECT COUNT(*) FROM "Sale_Payments" WHERE payment_method_id = ?"#,
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if linked > 0 {
+        return Err(format!(
+            "Esta forma de pagamento não pode ser excluída pois está vinculada a {} venda(s)",
+            linked
+        ));
+    }
+
+    let rows = conn
+        .execute(
+            r#"DELETE FROM "Payment_Methods" WHERE id = ?"#,
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if rows == 0 {
+        return Err(format!("Forma de pagamento {} não encontrada", id));
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn list_transaction_fees(
     payment_method_id: i64,
     state: State<DbState>,
@@ -522,5 +575,88 @@ mod tests {
             )
             .unwrap();
         assert_eq!(desc, "Débito padrão");
+    }
+
+    #[test]
+    fn rename_payment_method_updates_name() {
+        let conn = test_db();
+        let pm_id = insert_payment_method(&conn, "Cartão Antigo");
+        conn.execute(
+            r#"UPDATE "Payment_Methods" SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params!["Cartão Novo", pm_id],
+        ).unwrap();
+        let name: String = conn
+            .query_row(
+                r#"SELECT name FROM "Payment_Methods" WHERE id = ?"#,
+                params![pm_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Cartão Novo");
+    }
+
+    #[test]
+    fn rename_payment_method_rejects_empty_name() {
+        let name = "   ".trim().to_string();
+        assert!(name.is_empty());
+    }
+
+    #[test]
+    fn delete_payment_method_removes_unused_method() {
+        let conn = test_db();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let linked: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Sale_Payments" WHERE payment_method_id = ?"#,
+                params![pm_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, 0);
+        conn.execute(
+            r#"DELETE FROM "Payment_Methods" WHERE id = ?"#,
+            params![pm_id],
+        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Payment_Methods" WHERE id = ?"#,
+                params![pm_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn delete_payment_method_blocked_when_sales_exist() {
+        let conn = test_db();
+        use crate::auth::insert_user;
+        insert_user(&conn, "Teste", "teste", true);
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0))
+            .unwrap();
+        let pm_id = insert_payment_method(&conn, "Pix");
+        let sale_id: i64 = conn
+            .query_row(
+                r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+                   VALUES (?, '', 'closed', 50.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                   RETURNING id"#,
+                params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sale_Payments" (sale_id, payment_method_id, amount_paid, net_amount, created_at)
+               VALUES (?, ?, 50.0, 50.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, pm_id],
+        ).unwrap();
+        let linked: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Sale_Payments" WHERE payment_method_id = ?"#,
+                params![pm_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(linked > 0, "should have linked sale payments");
     }
 }
