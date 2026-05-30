@@ -282,7 +282,7 @@ pub fn do_close_sale_work(
 
     let mut stmt = conn
         .prepare(r#"
-            SELECT sp.product_id, sp.quantity, p.sellable
+            SELECT sp.product_id, sp.quantity, p.sellable, p.name
             FROM "Sales_Products" sp
             JOIN "Products" p ON p.id = sp.product_id
             WHERE sp.sale_id = ?
@@ -291,7 +291,7 @@ pub fn do_close_sale_work(
 
     let items = stmt
         .query_map(params![sale_id], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, i32>(1)?, row.get::<_, bool>(2)?))
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i32>(1)?, row.get::<_, bool>(2)?, row.get::<_, String>(3)?))
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
@@ -299,7 +299,7 @@ pub fn do_close_sale_work(
 
     let mut warnings: Vec<String> = Vec::new();
 
-    for (product_id, quantity, sellable) in items {
+    for (product_id, quantity, sellable, product_name) in items {
         if sellable {
             let order_id: i64 = conn
                 .query_row(
@@ -331,13 +331,19 @@ pub fn do_close_sale_work(
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| e.to_string())?;
 
-            for (child_id, comp_qty, child_name, current_stock) in components {
-                let qty_to_consume = comp_qty as f64 * quantity as f64;
+            if components.is_empty() {
+                let current_stock: f64 = conn
+                    .query_row(
+                        r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#,
+                        params![product_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0.0);
 
-                if current_stock < qty_to_consume {
+                if current_stock < quantity as f64 {
                     warnings.push(format!(
                         "Estoque insuficiente de '{}': disponível {:.2}, necessário {:.2}",
-                        child_name, current_stock, qty_to_consume
+                        product_name, current_stock, quantity as f64
                     ));
                 }
 
@@ -345,17 +351,36 @@ pub fn do_close_sale_work(
                     r#"INSERT INTO "Stock_Movements"
                        (product_id, quantity, movement_type, motive, created_at)
                        VALUES (?, ?, 'out', 'venda', CURRENT_TIMESTAMP)"#,
-                    params![child_id, qty_to_consume],
+                    params![product_id, quantity as f64],
                 )
                 .map_err(|e| e.to_string())?;
+            } else {
+                for (child_id, comp_qty, child_name, current_stock) in components {
+                    let qty_to_consume = comp_qty as f64 * quantity as f64;
 
-                conn.execute(
-                    r#"INSERT INTO "Production_Inputs"
-                       (production_order_id, product_id, quantity_used, created_at)
-                       VALUES (?, ?, ?, CURRENT_TIMESTAMP)"#,
-                    params![order_id, child_id, qty_to_consume],
-                )
-                .map_err(|e| e.to_string())?;
+                    if current_stock < qty_to_consume {
+                        warnings.push(format!(
+                            "Estoque insuficiente de '{}': disponível {:.2}, necessário {:.2}",
+                            child_name, current_stock, qty_to_consume
+                        ));
+                    }
+
+                    conn.execute(
+                        r#"INSERT INTO "Stock_Movements"
+                           (product_id, quantity, movement_type, motive, created_at)
+                           VALUES (?, ?, 'out', 'venda', CURRENT_TIMESTAMP)"#,
+                        params![child_id, qty_to_consume],
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                    conn.execute(
+                        r#"INSERT INTO "Production_Inputs"
+                           (production_order_id, product_id, quantity_used, created_at)
+                           VALUES (?, ?, ?, CURRENT_TIMESTAMP)"#,
+                        params![order_id, child_id, qty_to_consume],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
             }
         }
     }
@@ -820,5 +845,140 @@ mod tests {
             params![sale_id], |r| r.get(0),
         ).unwrap();
         assert!((net - 50.0).abs() < 1e-6, "no fee → net_amount = amount_paid = 50.0, got {}", net);
+    }
+
+    #[test]
+    fn close_sale_resale_product_deducts_own_stock() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Caneca", true);
+
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 10.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![product_id],
+        ).unwrap();
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 30.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 3, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        assert!(warnings.is_empty(), "Não deveria haver avisos com estoque suficiente");
+
+        let out_qty: f64 = conn.query_row(
+            r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
+               WHERE product_id = ? AND movement_type = 'out'"#,
+            params![product_id], |r| r.get(0),
+        ).unwrap();
+        assert!((out_qty - 3.0).abs() < 1e-9, "Esperado 3 unidades baixadas, foi {}", out_qty);
+
+        let balance: f64 = conn.query_row(
+            r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#,
+            params![product_id], |r| r.get(0),
+        ).unwrap();
+        assert!((balance - 7.0).abs() < 1e-9, "Saldo esperado 7, foi {}", balance);
+    }
+
+    #[test]
+    fn close_sale_resale_insufficient_stock_warns_and_proceeds() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Caneca", true);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        assert_eq!(warnings.len(), 1, "Deve haver 1 aviso de estoque insuficiente");
+        assert!(warnings[0].contains("Caneca"), "Aviso deve identificar o produto");
+
+        let status: String = conn.query_row(
+            r#"SELECT status FROM "Sales" WHERE id = ?"#,
+            params![sale_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(status, "closed", "Venda deve ser fechada mesmo com estoque insuficiente");
+
+        let out_qty: f64 = conn.query_row(
+            r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
+               WHERE product_id = ? AND movement_type = 'out'"#,
+            params![product_id], |r| r.get(0),
+        ).unwrap();
+        assert!((out_qty - 1.0).abs() < 1e-9, "Movimento 'out' deve ser gravado mesmo com saldo insuficiente");
+    }
+
+    #[test]
+    fn close_sale_resale_no_production_inputs_but_has_order() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Caneca", true);
+
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 5.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![product_id],
+        ).unwrap();
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let order_count: i64 = conn.query_row(
+            r#"SELECT COUNT(*) FROM "Production_Orders" WHERE sale_id = ?"#,
+            params![sale_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(order_count, 1, "Deve haver 1 Production_Order para o produto de revenda");
+
+        let input_count: i64 = conn.query_row(
+            r#"SELECT COUNT(*) FROM "Production_Inputs" pi
+               JOIN "Production_Orders" po ON po.id = pi.production_order_id
+               WHERE po.sale_id = ?"#,
+            params![sale_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(input_count, 0, "Não deve haver Production_Inputs para produto de revenda");
     }
 }
