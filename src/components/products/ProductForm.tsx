@@ -12,14 +12,18 @@ import type { ProductComponent } from "@/types/stock"
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 const pct = new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 2 })
 
+const fmtQty = (n: number) =>
+  n % 1 === 0 ? n.toLocaleString("pt-BR") : n.toFixed(2)
+
 type Props = {
   product: Product | null
   rates: PricingRates
+  stockQuantity?: number
   onCancel: () => void
   onSaved: () => void
 }
 
-export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
+export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }: Props) {
   const isEdit = product !== null
 
   const [name, setName] = useState(product?.name ?? "")
@@ -263,6 +267,18 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
             <option value="folha">Folha</option>
           </select>
         </div>
+
+        {/* Stock quantity — read-only, edit mode only */}
+        {isEdit && (
+          <div className="flex flex-col gap-1.5">
+            <Label>Estoque atual</Label>
+            <div className="flex h-10 w-full items-center rounded-md border border-teller-border bg-teller-card px-3 text-sm text-teller-muted">
+              {stockQuantity !== undefined
+                ? `${fmtQty(stockQuantity)} ${unit}`
+                : "—"}
+            </div>
+          </div>
+        )}
 
         {/* Cost */}
         <div className="flex flex-col gap-1.5">
