@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { ProductList } from "./ProductList"
 import { ProductForm } from "./ProductForm"
 import type { Product, PricingRates } from "@/types/product"
+import type { StockItem } from "@/types/stock"
 
 const DEFAULT_RATES: PricingRates = {
   cv: 0,
@@ -28,6 +29,7 @@ const tabClass = (active: boolean) =>
 export function Products() {
   const [products, setProducts] = useState<Product[]>([])
   const [rates, setRates] = useState<PricingRates>(DEFAULT_RATES)
+  const [stockByProduct, setStockByProduct] = useState<Map<number, number>>(new Map())
 
   // activeView: which tab is shown; formContent: what the form holds (independent)
   const [activeView, setActiveView] = useState<"list" | "form">("list")
@@ -35,8 +37,12 @@ export function Products() {
   const [formKey, setFormKey] = useState(0)
 
   const loadProducts = useCallback(async () => {
-    const list = await invoke<Product[]>("list_products")
+    const [list, stock] = await Promise.all([
+      invoke<Product[]>("list_products"),
+      invoke<StockItem[]>("list_stock"),
+    ])
     setProducts(list)
+    setStockByProduct(new Map(stock.map((s) => [s.product_id, s.current_quantity])))
   }, [])
 
   useEffect(() => {
@@ -115,6 +121,7 @@ export function Products() {
             key={formContent.kind === "edit" ? formContent.product.id : formKey}
             product={formContent.kind === "edit" ? formContent.product : null}
             rates={rates}
+            stockQuantity={formContent.kind === "edit" ? stockByProduct.get(formContent.product.id) : undefined}
             onCancel={closeForm}
             onSaved={async () => { await loadProducts(); closeForm() }}
           />
