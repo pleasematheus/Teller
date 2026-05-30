@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::DbState;
+use crate::products::get_product_loss_rate_raw;
 
 #[derive(Serialize)]
 pub struct StockItem {
@@ -19,6 +20,7 @@ pub struct PurchaseItemInput {
     pub unit_cost: f64,
     pub box_qty: Option<f64>,
     pub unit_qty: Option<f64>,
+    pub loss_rate: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -97,15 +99,25 @@ pub fn do_purchase_work(
         .map_err(|e| e.to_string())?;
 
     for item in items {
+        let effective_loss = item.loss_rate
+            .unwrap_or_else(|| get_product_loss_rate_raw(conn, item.product_id));
+
         conn.execute(
             r#"INSERT INTO "Purchase_Items"
                (purchase_id, product_id, quantity, unit_cost, box_qty, unit_qty,
-                creates_stock, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, true, CURRENT_TIMESTAMP)"#,
+                creates_stock, loss_rate, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, true, ?, CURRENT_TIMESTAMP)"#,
             params![
                 purchase_id, item.product_id, item.quantity, item.unit_cost,
-                item.box_qty, item.unit_qty
+                item.box_qty, item.unit_qty, effective_loss
             ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        conn.execute(
+            r#"UPDATE "Products" SET expected_loss_rate = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?"#,
+            params![effective_loss, item.product_id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -448,6 +460,75 @@ mod tests {
     use super::*;
     use crate::db::test_db;
     use crate::products::insert_product;
+
+    #[test]
+    fn purchase_records_loss_rate_and_propagates_to_product() {
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Papel Foto", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 10.0,
+            unit_cost: 5.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: None,
+        }];
+        do_purchase_work(&conn, 0.0, &items).unwrap();
+
+        let stored_loss: f64 = conn
+            .query_row(
+                r#"SELECT CAST(loss_rate AS DOUBLE) FROM "Purchase_Items" WHERE product_id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        // No history → suggested rate = 0.0
+        assert_eq!(stored_loss, 0.0);
+
+        let product_loss: f64 = conn
+            .query_row(
+                r#"SELECT CAST(expected_loss_rate AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(product_loss, 0.0);
+    }
+
+    #[test]
+    fn purchase_override_loss_rate_takes_precedence() {
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Bobina", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 5.0,
+            unit_cost: 20.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: Some(0.15),
+        }];
+        do_purchase_work(&conn, 0.0, &items).unwrap();
+
+        let stored_loss: f64 = conn
+            .query_row(
+                r#"SELECT CAST(loss_rate AS DOUBLE) FROM "Purchase_Items" WHERE product_id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((stored_loss - 0.15).abs() < 1e-9);
+
+        let product_loss: f64 = conn
+            .query_row(
+                r#"SELECT CAST(expected_loss_rate AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((product_loss - 0.15).abs() < 1e-9);
+    }
 
     #[test]
     fn create_purchase_inserts_purchase_and_stock_movement() {

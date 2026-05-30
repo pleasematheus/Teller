@@ -18,6 +18,7 @@ type ItemState = {
   boxQty: string
   unitQty: string
   showConversion: boolean
+  lossRatePct: string
 }
 
 const newItem = (): ItemState => ({
@@ -28,6 +29,7 @@ const newItem = (): ItemState => ({
   boxQty: "",
   unitQty: "",
   showConversion: false,
+  lossRatePct: "0",
 })
 
 function stockQty(item: ItemState): number {
@@ -67,12 +69,14 @@ export function PurchaseForm({ onSaved }: Props) {
       const qty = parseFloat(i.quantity)
       const cost = parseFloat(i.unitCost)
       if (!i.productId || !qty || qty <= 0 || !cost || cost < 0) return null
+      const lossRate = parseFloat(i.lossRatePct)
       return {
         product_id: i.productId as number,
         quantity: qty,
         unit_cost: cost,
         box_qty: i.showConversion && i.boxQty ? parseFloat(i.boxQty) : null,
         unit_qty: i.showConversion && i.unitQty ? parseFloat(i.unitQty) : null,
+        loss_rate: isNaN(lossRate) ? null : lossRate / 100,
       }
     })
 
@@ -144,16 +148,22 @@ export function PurchaseForm({ onSaved }: Props) {
               )}
             </div>
 
-            <div className="grid grid-cols-[1fr_auto_auto] gap-3 items-end">
+            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-end">
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-teller-muted">Produto</label>
                 <select
                   value={item.productId}
-                  onChange={(e) =>
-                    update(item.id, {
-                      productId: e.target.value ? Number(e.target.value) : "",
-                    })
-                  }
+                  onChange={(e) => {
+                    const pid = e.target.value ? Number(e.target.value) : ""
+                    update(item.id, { productId: pid })
+                    if (pid) {
+                      invoke<number>("get_product_loss_rate", { productId: pid })
+                        .then((rate) =>
+                          update(item.id, { lossRatePct: String((rate * 100).toFixed(2)) })
+                        )
+                        .catch(() => {})
+                    }
+                  }}
                   className={selectClass}
                 >
                   <option value="">Selecione...</option>
@@ -186,6 +196,19 @@ export function PurchaseForm({ onSaved }: Props) {
                   onChange={(e) => update(item.id, { unitCost: e.target.value })}
                   placeholder="0,00"
                   className="w-28"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-teller-muted">Perda (%)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={99}
+                  step="0.01"
+                  value={item.lossRatePct}
+                  onChange={(e) => update(item.id, { lossRatePct: e.target.value })}
+                  placeholder="0"
+                  className="w-20"
                 />
               </div>
             </div>

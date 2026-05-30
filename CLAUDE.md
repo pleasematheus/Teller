@@ -1,173 +1,39 @@
-# Approach
+# Teller: Diretrizes do Projeto
 
-1. Read existing files before writing. Don't re-read unless changed.
-2. Thorough in reasoning, concise in output.
-3. Skip files over 100KB unless required.
-4. No sycophantic openers or closing fluff.
-5. No emojis or em-dashes.
-6. Do not guess APIs, versions, flags, commit SHAs, or package names. Verify by reading code or docs before asserting.
+## Approach
+- Leia arquivos antes de escrever. Não releia sem que tenham mudado.
+- Raciocínio minucioso, output conciso.
+- Pule arquivos acima de 100KB salvo se necessário.
+- Sem aberturas bajuladoras nem fluff de fechamento.
+- Sem emojis ou em-dashes.
+- Não adivinhe APIs, versões, flags, SHAs ou nomes de pacotes. Verifique lendo código ou docs antes de afirmar.
 
-# Teller — Diretrizes do Projeto
+## Proibido
+- Nunca reescreva um arquivo inteiro para alterar uma função; edite apenas o trecho necessário.
+- Nunca adicione dependências sem perguntar primeiro.
+- Nunca crie testes sem antes ler o arquivo a ser testado.
+- Nunca leia o catálogo completo de RTK (docs/rtk.md) sem necessidade explícita.
 
 ## Programação Funcional
-
-- Prefira funções puras: mesma entrada, mesma saída, sem side effects ocultos
-- Dados imutáveis: nunca mute objetos ou arrays diretamente; use spread, `map`, `filter`, `reduce`
-- Evite classes; use funções e composição
-- Componentes React devem ser funções — sem lógica com side effects fora de hooks explícitos (`useEffect`, `useCallback`)
-- Extraia lógica de negócio de componentes para funções puras testáveis em arquivos separados (`src/lib/`)
-- No Rust, prefira funções que retornam `Result<T, E>` a mutações implícitas; evite estado mutável compartilhado
+- Prefira funções puras: mesma entrada, mesma saída, sem side effects ocultos.
+- Dados imutáveis: nunca mute objetos ou arrays; use spread, map, filter, reduce.
+- Evite classes; use funções e composição.
+- Componentes React são funções; side effects só em hooks explícitos (useEffect, useCallback).
+- Extraia lógica de negócio de componentes para funções puras testáveis em src/lib/.
+- Em Rust, prefira funções que retornam Result<T, E> a mutações implícitas; evite estado mutável compartilhado.
 
 ## Testes
-
-- Todo utilitário em `src/lib/` deve ter um arquivo de teste correspondente (`*.test.ts`) com Vitest
-- Todo Tauri command Rust deve ter ao menos um teste unitário no mesmo arquivo (`#[cfg(test)]`)
-- Teste comportamento, não implementação: teste o que a função faz, não como ela faz
-- Cada cenário dos specs OpenSpec (`#### Scenario:`) é um teste potencial — use-os como referência
+- Todo utilitário em src/lib/ tem um *.test.ts correspondente (Vitest).
+- Todo Tauri command Rust tem ao menos um teste unitário no mesmo arquivo (#[cfg(test)]).
+- Teste comportamento, não implementação.
+- Use os blocos #### Scenario: dos specs OpenSpec como referência de casos de teste.
 
 ## Stack
-
 - Frontend: React 19, TypeScript, Tailwind 4, shadcn/ui, Vitest
-- Backend: Tauri 2, Rust, DuckDB (`duckdb = "1.4.4" bundled`)
-- Testes Rust: `cargo test`; Testes frontend: `bun run test` (Vitest)
+- Backend: Tauri 2, Rust, DuckDB (duckdb = "1.4.4" bundled)
+- Testes: `cargo test` (Rust), `bun run test` (frontend)
 
----
-
-<!-- rtk-instructions v2 -->
-# RTK (Rust Token Killer) - Token-Optimized Commands
-
-## Golden Rule
-
-**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
-
-**Important**: Even in command chains with `&&`, use `rtk`:
-```bash
-# ❌ Wrong
-git add . && git commit -m "msg" && git push
-
-# ✅ Correct
-rtk git add . && rtk git commit -m "msg" && rtk git push
-```
-
-## RTK Commands by Workflow
-
-### Build & Compile (80-90% savings)
-```bash
-rtk cargo build         # Cargo build output
-rtk cargo check         # Cargo check output
-rtk cargo clippy        # Clippy warnings grouped by file (80%)
-rtk tsc                 # TypeScript errors grouped by file/code (83%)
-rtk lint                # ESLint/Biome violations grouped (84%)
-rtk prettier --check    # Files needing format only (70%)
-rtk next build          # Next.js build with route metrics (87%)
-```
-
-### Test (60-99% savings)
-```bash
-rtk cargo test          # Cargo test failures only (90%)
-rtk go test             # Go test failures only (90%)
-rtk jest                # Jest failures only (99.5%)
-rtk vitest              # Vitest failures only (99.5%)
-rtk playwright test     # Playwright failures only (94%)
-rtk pytest              # Python test failures only (90%)
-rtk rake test           # Ruby test failures only (90%)
-rtk rspec               # RSpec test failures only (60%)
-rtk test <cmd>          # Generic test wrapper - failures only
-```
-
-### Git (59-80% savings)
-```bash
-rtk git status          # Compact status
-rtk git log             # Compact log (works with all git flags)
-rtk git diff            # Compact diff (80%)
-rtk git show            # Compact show (80%)
-rtk git add             # Ultra-compact confirmations (59%)
-rtk git commit          # Ultra-compact confirmations (59%)
-rtk git push            # Ultra-compact confirmations
-rtk git pull            # Ultra-compact confirmations
-rtk git branch          # Compact branch list
-rtk git fetch           # Compact fetch
-rtk git stash           # Compact stash
-rtk git worktree        # Compact worktree
-```
-
-Note: Git passthrough works for ALL subcommands, even those not explicitly listed.
-
-### GitHub (26-87% savings)
-```bash
-rtk gh pr view <num>    # Compact PR view (87%)
-rtk gh pr checks        # Compact PR checks (79%)
-rtk gh run list         # Compact workflow runs (82%)
-rtk gh issue list       # Compact issue list (80%)
-rtk gh api              # Compact API responses (26%)
-```
-
-### JavaScript/TypeScript Tooling (70-90% savings)
-```bash
-rtk pnpm list           # Compact dependency tree (70%)
-rtk pnpm outdated       # Compact outdated packages (80%)
-rtk pnpm install        # Compact install output (90%)
-rtk npm run <script>    # Compact npm script output
-rtk npx <cmd>           # Compact npx command output
-rtk prisma              # Prisma without ASCII art (88%)
-```
-
-### Files & Search (60-75% savings)
-```bash
-rtk ls <path>           # Tree format, compact (65%)
-rtk read <file>         # Code reading with filtering (60%)
-rtk grep <pattern>      # Search grouped by file (75%). Format flags (-c, -l, -L, -o, -Z) run raw.
-rtk find <pattern>      # Find grouped by directory (70%)
-```
-
-### Analysis & Debug (70-90% savings)
-```bash
-rtk err <cmd>           # Filter errors only from any command
-rtk log <file>          # Deduplicated logs with counts
-rtk json <file>         # JSON structure without values
-rtk deps                # Dependency overview
-rtk env                 # Environment variables compact
-rtk summary <cmd>       # Smart summary of command output
-rtk diff                # Ultra-compact diffs
-```
-
-### Infrastructure (85% savings)
-```bash
-rtk docker ps           # Compact container list
-rtk docker images       # Compact image list
-rtk docker logs <c>     # Deduplicated logs
-rtk kubectl get         # Compact resource list
-rtk kubectl logs        # Deduplicated pod logs
-```
-
-### Network (65-70% savings)
-```bash
-rtk curl <url>          # Compact HTTP responses (70%)
-rtk wget <url>          # Compact download output (65%)
-```
-
-### Meta Commands
-```bash
-rtk gain                # View token savings statistics
-rtk gain --history      # View command history with savings
-rtk discover            # Analyze Claude Code sessions for missed RTK usage
-rtk proxy <cmd>         # Run command without filtering (for debugging)
-rtk init                # Add RTK instructions to CLAUDE.md
-rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
-```
-
-## Token Savings Overview
-
-| Category | Commands | Typical Savings |
-|----------|----------|-----------------|
-| Tests | vitest, playwright, cargo test | 90-99% |
-| Build | next, tsc, lint, prettier | 70-87% |
-| Git | status, log, diff, add, commit | 59-80% |
-| GitHub | gh pr, gh run, gh issue | 26-87% |
-| Package Managers | pnpm, npm, npx | 70-90% |
-| Files | ls, read, grep, find | 60-75% |
-| Infrastructure | docker, kubectl | 85% |
-| Network | curl, wget | 65-70% |
-
-Overall average: **60-90% token reduction** on common development operations.
-<!-- /rtk-instructions -->
+## RTK: Comandos Otimizados em Tokens
+Sempre prefixe comandos com `rtk`, inclusive em cadeias com `&&`. É sempre seguro: se não houver filtro dedicado, o comando passa through sem alteração.
+Exemplos: `rtk cargo build`, `rtk cargo test`, `rtk vitest`, `rtk tsc`, `rtk lint`, `rtk git diff`, `rtk git commit`, `rtk docker logs`.
+Estatísticas de economia: `rtk gain`. Catálogo completo de comandos: ver docs/rtk.md.

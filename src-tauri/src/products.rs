@@ -139,33 +139,67 @@ pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> 
     })
 }
 
+pub fn get_product_loss_rate_raw(conn: &Connection, product_id: i64) -> f64 {
+    let (total_loss, total_resolved): (f64, f64) = conn
+        .query_row(
+            r#"SELECT
+               COALESCE(SUM(CASE WHEN motive = 'perda' THEN quantity ELSE 0 END), 0.0),
+               COALESCE(SUM(quantity), 0.0)
+               FROM "Stock_Movements"
+               WHERE product_id = ? AND movement_type = 'out'
+               AND motive IN ('perda', 'venda')
+               AND created_at >= now()::TIMESTAMP - INTERVAL '12 MONTHS'"#,
+            params![product_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap_or((0.0, 0.0));
+
+    if total_resolved == 0.0 {
+        0.0
+    } else {
+        total_loss / total_resolved
+    }
+}
+
 #[tauri::command]
 pub fn get_product_loss_rate(product_id: i64, state: State<DbState>) -> Result<f64, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_product_loss_rate_raw(&conn, product_id))
+}
 
-    let total_in: f64 = conn
-        .query_row(
-            r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
-               WHERE product_id = ? AND movement_type = 'in'"#,
-            params![product_id],
-            |row| row.get(0),
-        )
-        .unwrap_or(0.0);
+/// Derives CMV from Product_Components for a product with a bill of materials.
+/// Returns Ok(None) if the product has no components (caller uses own cost_price).
+/// Returns Err if any component has expected_loss_rate >= 1 (CMV undefined).
+pub fn compute_cmv_from_components(conn: &Connection, product_id: i64) -> Result<Option<f64>, String> {
+    let mut stmt = conn
+        .prepare(r#"
+            SELECT pc.quantity,
+                   CAST(p.cost_price AS DOUBLE),
+                   CAST(p.expected_loss_rate AS DOUBLE)
+            FROM "Product_Components" pc
+            JOIN "Products" p ON p.id = pc.child_id
+            WHERE pc.parent_id = ?
+        "#)
+        .map_err(|e| e.to_string())?;
 
-    if total_in == 0.0 {
-        return Ok(0.0);
+    let components: Vec<(i64, f64, f64)> = stmt
+        .query_map(params![product_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    if components.is_empty() {
+        return Ok(None);
     }
 
-    let total_loss: f64 = conn
-        .query_row(
-            r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
-               WHERE product_id = ? AND movement_type = 'out' AND motive = 'perda'"#,
-            params![product_id],
-            |row| row.get(0),
-        )
-        .unwrap_or(0.0);
-
-    Ok(total_loss / total_in)
+    let mut cmv = 0.0_f64;
+    for (quantity, cost_price, loss_rate) in &components {
+        if *loss_rate >= 1.0 {
+            return Err("Componente com taxa de perda de 100% impede cálculo do CMV".to_string());
+        }
+        cmv += (cost_price / (1.0 - loss_rate)) * (*quantity as f64);
+    }
+    Ok(Some(cmv))
 }
 
 #[tauri::command]
@@ -808,24 +842,42 @@ mod tests {
     }
 
     #[test]
-    fn loss_rate_zero_without_movements() {
+    fn loss_rate_zero_without_resolved_movements() {
         let conn = test_db();
-        let id = insert_product(&conn, "Produto", true);
-        let total_in: f64 = conn
-            .query_row(
-                r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
-                   WHERE product_id = ? AND movement_type = 'in'"#,
-                params![id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(total_in, 0.0);
+        let id = insert_product(&conn, "Produto", false);
+        // Only an 'in' movement — no resolved units
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 100.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        assert_eq!(get_product_loss_rate_raw(&conn, id), 0.0);
     }
 
     #[test]
-    fn loss_rate_calculated_from_movements() {
+    fn loss_rate_calculated_from_venda_and_perda() {
+        // Scenario: 20 sold + 5 lost → rate = 5/25 = 0.2
         let conn = test_db();
-        let id = insert_product(&conn, "Produto", true);
+        let id = insert_product(&conn, "Papel", false);
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 20.0, 'out', 'venda', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 5.0, 'out', 'perda', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        let rate = get_product_loss_rate_raw(&conn, id);
+        assert!((rate - 0.2).abs() < 1e-9, "expected 0.2, got {}", rate);
+    }
+
+    #[test]
+    fn loss_rate_in_movements_do_not_dilute() {
+        // Scenario: 10 sold + 5 lost + 100 still in stock → rate = 5/15, not 5/115
+        let conn = test_db();
+        let id = insert_product(&conn, "Papel", false);
         conn.execute(
             r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
                VALUES (?, 100.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
@@ -833,22 +885,82 @@ mod tests {
         ).unwrap();
         conn.execute(
             r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
-               VALUES (?, 10.0, 'out', 'perda', CURRENT_TIMESTAMP)"#,
+               VALUES (?, 10.0, 'out', 'venda', CURRENT_TIMESTAMP)"#,
             params![id],
         ).unwrap();
-        let total_in: f64 = conn
-            .query_row(
-                r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
-                   WHERE product_id = ? AND movement_type = 'in'"#,
-                params![id], |r| r.get(0),
-            ).unwrap();
-        let total_loss: f64 = conn
-            .query_row(
-                r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
-                   WHERE product_id = ? AND movement_type = 'out' AND motive = 'perda'"#,
-                params![id], |r| r.get(0),
-            ).unwrap();
-        assert!((total_loss / total_in - 0.1).abs() < 1e-9);
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 5.0, 'out', 'perda', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        let rate = get_product_loss_rate_raw(&conn, id);
+        let expected = 5.0 / 15.0;
+        assert!((rate - expected).abs() < 1e-9, "expected {}, got {}", expected, rate);
+    }
+
+    #[test]
+    fn loss_rate_ignores_movements_older_than_12_months() {
+        // Movements older than 12 months must not count
+        let conn = test_db();
+        let id = insert_product(&conn, "Papel", false);
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 10.0, 'out', 'perda', now()::TIMESTAMP - INTERVAL '13 MONTHS')"#,
+            params![id],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 20.0, 'out', 'venda', now()::TIMESTAMP - INTERVAL '13 MONTHS')"#,
+            params![id],
+        ).unwrap();
+        assert_eq!(get_product_loss_rate_raw(&conn, id), 0.0);
+    }
+
+    #[test]
+    fn cmv_from_components_no_components_returns_none() {
+        let conn = test_db();
+        let parent = insert_product(&conn, "Foto", true);
+        let result = compute_cmv_from_components(&conn, parent).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn cmv_from_components_rollup_is_correct() {
+        // child cost=10, loss=0.2 → CMV per unit = 10/0.8 = 12.5; qty=2 → 25.0
+        let conn = test_db();
+        let parent = insert_product(&conn, "Foto", true);
+        let child = insert_product(&conn, "Papel", false);
+        conn.execute(
+            r#"UPDATE "Products" SET cost_price = 10.0, expected_loss_rate = 0.2,
+               updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![child],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Product_Components" (parent_id, child_id, quantity, updated_at, created_at)
+               VALUES (?, ?, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![parent, child],
+        ).unwrap();
+        let cmv = compute_cmv_from_components(&conn, parent).unwrap().unwrap();
+        assert!((cmv - 25.0).abs() < 1e-9, "expected 25.0, got {}", cmv);
+    }
+
+    #[test]
+    fn cmv_from_components_loss_rate_one_returns_err() {
+        let conn = test_db();
+        let parent = insert_product(&conn, "Foto", true);
+        let child = insert_product(&conn, "Papel", false);
+        conn.execute(
+            r#"UPDATE "Products" SET expected_loss_rate = 1.0,
+               updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![child],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Product_Components" (parent_id, child_id, quantity, updated_at, created_at)
+               VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![parent, child],
+        ).unwrap();
+        let result = compute_cmv_from_components(&conn, parent);
+        assert!(result.is_err(), "should error when component loss_rate >= 1");
     }
 
     #[test]

@@ -5,14 +5,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { computePrice, computeMarginFromPrice } from "@/lib/pricing"
+import { computePrice, computeMarginFromPrice, computeCmvFromComponents } from "@/lib/pricing"
 import type { Product, PricingRates } from "@/types/product"
 import type { ProductComponent } from "@/types/stock"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 const pct = new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 2 })
-
-type LossMode = "manual" | "auto"
 
 type Props = {
   product: Product | null
@@ -31,12 +29,10 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
   const [unit, setUnit] = useState(product?.unit ?? "unidade")
   const [costPrice, setCostPrice] = useState(product ? String(product.cost_price) : "")
   const [lossRatePct, setLossRatePct] = useState(product ? String(product.expected_loss_rate * 100) : "0")
-  const [lossMode, setLossMode] = useState<LossMode>(product?.loss_mode ?? "manual")
   const [finalPrice, setFinalPrice] = useState(product ? String(product.final_price) : "")
   const [noMarginHistory, setNoMarginHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [calculating, setCalculating] = useState(false)
 
   const [components, setComponents] = useState<ProductComponent[]>([])
   const [allInsumos, setAllInsumos] = useState<Product[]>([])
@@ -45,19 +41,44 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
   const [addingComponent, setAddingComponent] = useState(false)
   const [editingQty, setEditingQty] = useState<Record<number, string>>({})
 
-  const parsedCost = parseFloat(costPrice) || 0
   const parsedLossRate = (parseFloat(lossRatePct) || 0) / 100
   const parsedFinalPrice = parseFloat(finalPrice) || 0
 
-  // CMV derivado dinamicamente — usado como mínimo do input de preço
-  const currentCmv = parsedLossRate < 1 && parsedLossRate >= 0
-    ? parsedCost / (1 - parsedLossRate)
-    : 0
+  const hasComponents = components.length > 0
+
+  // Resolve actual cost/loss for each component from the full products list.
+  const derivedCmv = useMemo(() => {
+    if (!hasComponents) return null
+    const resolved = components.map((c) => {
+      const prod = allInsumos.find((p) => p.id === c.child_id)
+      if (!prod) return null
+      return { cost_price: prod.cost_price, expected_loss_rate: prod.expected_loss_rate, quantity: c.quantity }
+    })
+    if (resolved.some((r) => r === null)) return null
+    return computeCmvFromComponents(resolved as { cost_price: number; expected_loss_rate: number; quantity: number }[])
+  }, [components, allInsumos, hasComponents])
+
+  // For products with components, cost is derived. For others, use the manual cost input.
+  const parsedCost = hasComponents && derivedCmv !== null
+    ? derivedCmv
+    : parseFloat(costPrice) || 0
+
+  // CMV for the price floor input
+  const currentCmv = hasComponents && derivedCmv !== null
+    ? derivedCmv
+    : (parsedLossRate < 1 && parsedLossRate >= 0 ? parsedCost / (1 - parsedLossRate) : 0)
 
   const breakdown = useMemo(
-    () => computeMarginFromPrice(parsedCost, parsedLossRate, parsedFinalPrice, rates),
-    [parsedCost, parsedLossRate, parsedFinalPrice, rates],
+    () => {
+      if (hasComponents && derivedCmv !== null) {
+        // CMV is already the rolled-up value; treat loss_rate=0 for the breakdown
+        return computeMarginFromPrice(derivedCmv, 0, parsedFinalPrice, rates)
+      }
+      return computeMarginFromPrice(parsedCost, parsedLossRate, parsedFinalPrice, rates)
+    },
+    [parsedCost, parsedLossRate, parsedFinalPrice, rates, hasComponents, derivedCmv],
   )
+
 
   useEffect(() => {
     if (product) {
@@ -147,19 +168,6 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
     }
   }
 
-  const handleCalcLoss = async () => {
-    if (!product) return
-    setCalculating(true)
-    try {
-      const rate = await invoke<number>("get_product_loss_rate", { productId: product.id })
-      setLossRatePct(String((rate * 100).toFixed(2)))
-    } catch {
-      setError("Erro ao calcular taxa de perda.")
-    } finally {
-      setCalculating(false)
-    }
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
@@ -180,9 +188,9 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
       costPrice: parsedCost,
       markup: breakdown.markup_percent,
       finalPrice: parsedFinalPrice,
-      expectedLossRate: parsedLossRate,
+      expectedLossRate: hasComponents ? 0 : parsedLossRate,
       profitMargin: breakdown.profit_margin,
-      lossMode,
+      lossMode: "manual",
     }
 
     try {
@@ -259,41 +267,29 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
         {/* Cost */}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="cost">Custo (R$) *</Label>
-          <Input
-            id="cost"
-            type="number"
-            min={0}
-            step="0.01"
-            value={costPrice}
-            onChange={(e) => setCostPrice(e.target.value)}
-            placeholder="0,00"
-          />
+          {hasComponents ? (
+            <div className="flex h-10 w-full items-center rounded-md border border-teller-border bg-teller-card px-3 text-sm text-teller-muted">
+              {derivedCmv !== null
+                ? brl.format(derivedCmv)
+                : "Custo indefinido (componente com perda 100%)"}
+            </div>
+          ) : (
+            <Input
+              id="cost"
+              type="number"
+              min={0}
+              step="0.01"
+              value={costPrice}
+              onChange={(e) => setCostPrice(e.target.value)}
+              placeholder="0,00"
+            />
+          )}
         </div>
 
-        {/* Loss rate */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
+        {/* Loss rate — only relevant for products without components */}
+        {!hasComponents && (
+          <div className="flex flex-col gap-1.5">
             <Label>Taxa de perda (%)</Label>
-            <div className="flex gap-1 rounded-md border border-teller-border p-0.5 text-xs">
-              {(["manual", "auto"] as LossMode[]).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setLossMode(m)}
-                  className={[
-                    "px-2 py-0.5 rounded transition-colors",
-                    lossMode === m
-                      ? "bg-teller-accent text-white"
-                      : "text-teller-muted hover:text-teller-text",
-                  ].join(" ")}
-                >
-                  {m === "manual" ? "Manual" : "Auto"}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {lossMode === "manual" ? (
             <Input
               type="number"
               min={0}
@@ -303,21 +299,8 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
               onChange={(e) => setLossRatePct(e.target.value)}
               placeholder="0"
             />
-          ) : (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleCalcLoss}
-              disabled={!isEdit || calculating}
-            >
-              {calculating
-                ? "Calculando..."
-                : isEdit
-                  ? `Calcular (atual: ${lossRatePct}%)`
-                  : "Disponível apenas na edição"}
-            </Button>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Final price */}
         <div className="flex flex-col gap-1.5">
@@ -337,6 +320,18 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
             placeholder="0,00"
           />
         </div>
+
+        {/* Warning: sellable with no way to derive cost */}
+        {sellable && !hasComponents && parsedCost === 0 && (
+          <p className="text-xs text-amber-500">
+            Produto vendável sem ficha técnica e sem custo definido — o CMV não pode ser calculado.
+          </p>
+        )}
+        {hasComponents && derivedCmv === null && (
+          <p className="text-xs text-red-500">
+            Um ou mais componentes tem taxa de perda de 100% — o CMV é indefinido e a precificação está bloqueada.
+          </p>
+        )}
 
         {/* Price breakdown */}
         <div className="rounded-lg border border-teller-border bg-teller-card p-4 flex flex-col gap-2">
@@ -496,7 +491,11 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
           <Button type="button" variant="outline" onClick={onCancel} className="flex-1">
             Cancelar
           </Button>
-          <Button type="submit" disabled={saving || breakdown.below_cost} className="flex-1">
+          <Button
+            type="submit"
+            disabled={saving || breakdown.below_cost || (hasComponents && derivedCmv === null)}
+            className="flex-1"
+          >
             {saving ? "Salvando..." : "Salvar"}
           </Button>
         </div>
