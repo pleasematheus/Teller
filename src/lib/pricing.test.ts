@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { computePrice, computeMaxDiscount, applyGlobalDiscount } from "./pricing"
+import { computePrice, computeMaxDiscount, applyGlobalDiscount, computeMarginFromPrice } from "./pricing"
 import type { PricingRates } from "@/types/product"
 
 const zeroRates: PricingRates = {
@@ -94,6 +94,57 @@ describe("computePrice", () => {
     const result = computePrice(100, 1, realRates)
     expect(result.feasible).toBe(false)
     expect(result.max_margin).toBeCloseTo(0.83, 5)
+  })
+})
+
+describe("computeMarginFromPrice", () => {
+  // realRates: cv=0.1, df=0.05, invest=0.02, overhead=0.17
+  // cmv(cost=100, loss=0.1) = 100/0.9 ≈ 111.11
+  // break_even = 111.11 / (1-0.17) = 111.11/0.83 ≈ 133.87
+
+  it("preço acima do equilíbrio retorna feasible: true, profit_margin > 0", () => {
+    // final_price=200 > break_even≈133.87
+    const result = computeMarginFromPrice(100, 0.1, 200, realRates)
+    expect(result.feasible).toBe(true)
+    expect(result.below_cost).toBe(false)
+    expect(result.profit_margin).toBeGreaterThan(0)
+    expect(result.cmv).toBeCloseTo(100 / 0.9, 4)
+    expect(result.break_even_price).toBeCloseTo((100 / 0.9) / 0.83, 2)
+  })
+
+  it("preço abaixo do CMV retorna below_cost: true e feasible: false", () => {
+    // cmv≈111.11, final_price=100 < 111.11
+    const result = computeMarginFromPrice(100, 0.1, 100, realRates)
+    expect(result.below_cost).toBe(true)
+    expect(result.feasible).toBe(false)
+  })
+
+  it("preço entre CMV e equilíbrio retorna profit_margin < 0 com below_cost: false", () => {
+    // cmv≈111.11, break_even≈133.87, final_price=120 está entre eles
+    const result = computeMarginFromPrice(100, 0.1, 120, realRates)
+    expect(result.below_cost).toBe(false)
+    expect(result.profit_margin).toBeLessThan(0)
+    expect(result.feasible).toBe(true)
+  })
+
+  it("overhead >= 1 retorna feasible: false sem erro (equilíbrio indefinido)", () => {
+    const heavyRates: PricingRates = { cv: 0.6, df: 0.3, investment_rate: 0.2, no_sales_history: false }
+    const result = computeMarginFromPrice(100, 0, 200, heavyRates)
+    expect(result.feasible).toBe(false)
+    expect(result.break_even_price).toBe(0)
+  })
+
+  it("identidade inversa: computeMarginFromPrice recupera a margem usada em computePrice", () => {
+    const margin = 0.25
+    const suggested = computePrice(100, 0.1, realRates, margin)
+    const recovered = computeMarginFromPrice(100, 0.1, suggested.final_price, realRates)
+    expect(recovered.profit_margin).toBeCloseTo(margin, 8)
+  })
+
+  it("lossRate inválido retorna feasible: false", () => {
+    const result = computeMarginFromPrice(100, 1, 200, realRates)
+    expect(result.feasible).toBe(false)
+    expect(result.cmv).toBe(0)
   })
 })
 

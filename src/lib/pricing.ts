@@ -1,4 +1,4 @@
-import type { PricingRates, PriceBreakdown } from "@/types/product"
+import type { PricingRates, PriceBreakdown, MarginBreakdown } from "@/types/product"
 
 export function computePrice(
   costPrice: number,
@@ -24,6 +24,49 @@ export function computePrice(
   const final_price = cmv * markup
 
   return { cmv, markup_percent: markup, final_price, feasible: true, max_margin }
+}
+
+export function computeMarginFromPrice(
+  costPrice: number,
+  lossRate: number,
+  finalPrice: number,
+  rates: PricingRates,
+): MarginBreakdown {
+  if (lossRate >= 1 || lossRate < 0) {
+    return {
+      cmv: 0,
+      markup_percent: 0,
+      profit_margin: 0,
+      min_price: 0,
+      break_even_price: 0,
+      below_cost: false,
+      feasible: false,
+    }
+  }
+
+  const cmv = costPrice / (1 - lossRate)
+  const min_price = cmv
+  const overhead = rates.cv + rates.df + rates.investment_rate
+  const below_cost = finalPrice < cmv
+
+  if (overhead >= 1) {
+    return {
+      cmv,
+      markup_percent: finalPrice > 0 ? finalPrice / cmv : 0,
+      profit_margin: finalPrice > 0 ? 1 - overhead - cmv / finalPrice : 0,
+      min_price,
+      break_even_price: 0,
+      below_cost,
+      feasible: false,
+    }
+  }
+
+  const break_even_price = cmv / (1 - overhead)
+  const markup_percent = cmv > 0 ? finalPrice / cmv : 0
+  const profit_margin = finalPrice > 0 ? 1 - overhead - cmv / finalPrice : 0
+  const feasible = !below_cost && finalPrice > 0
+
+  return { cmv, markup_percent, profit_margin, min_price, break_even_price, below_cost, feasible }
 }
 
 type ProductForDiscount = {

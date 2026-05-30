@@ -1,6 +1,6 @@
 ## Purpose
 
-Listagem, cadastro e edição de produtos com distinção entre insumos e produtos vendáveis, incluindo precificação automática via fórmula CMV × Markup.
+Listagem, cadastro e edição de produtos com distinção entre insumos e produtos vendáveis. O operador informa o **preço final** diretamente; a margem de lucro é derivada pelo sistema via inversão da fórmula de markup divisor (`margin = 1 − cv − df − ir − CMV/preço`). O CMV atua como piso de custo para evitar precificação no prejuízo.
 
 ## Requirements
 
@@ -34,11 +34,15 @@ O sistema SHALL permitir filtrar a lista de produtos por [Todos / Vendáveis / I
 
 ### Requirement: Cadastro de produto
 
-O sistema SHALL permitir criar um novo produto com nome, descrição opcional, flags `active` e `sellable`, custo, taxa de perda, unidade de medida e **margem de lucro individual**.
+O sistema SHALL permitir criar um novo produto com nome, descrição opcional, flags `active` e `sellable`, custo, taxa de perda, unidade de medida e **preço final de venda**. O sistema SHALL derivar `markup` e `profit_margin` a partir do preço final informado e persistir os três campos.
 
 #### Scenario: Cadastro com dados válidos
-- **WHEN** o usuário submete nome não-vazio, `cost_price >= 0`, `expected_loss_rate` entre 0 e 1, `unit` válido e `profit_margin` entre 0 e 1
-- **THEN** o sistema insere o produto em `Products` com `markup` e `final_price` calculados usando `profit_margin` do produto e retorna sucesso
+- **WHEN** o usuário submete nome não-vazio, `cost_price >= 0`, `expected_loss_rate` entre 0 e 1, `unit` válido e `final_price >= CMV`
+- **THEN** o sistema insere o produto em `Products` com `markup = final_price / CMV` e `profit_margin = 1 − cv − df − investment_rate − CMV/final_price` derivados do preço final, e retorna sucesso
+
+#### Scenario: Preço abaixo do custo
+- **WHEN** o usuário submete `final_price < CMV` (CMV = `cost_price / (1 − expected_loss_rate)`)
+- **THEN** o sistema retorna erro de prejuízo (preço abaixo do custo) sem criar o registro
 
 #### Scenario: Nome vazio
 - **WHEN** o usuário submete nome em branco
@@ -54,11 +58,15 @@ O sistema SHALL permitir criar um novo produto com nome, descrição opcional, f
 
 ### Requirement: Edição de produto
 
-O sistema SHALL permitir atualizar os dados de um produto existente incluindo `unit` e `profit_margin`, recalculando `markup` e `final_price` ao salvar.
+O sistema SHALL permitir atualizar os dados de um produto existente incluindo `unit` e `final_price`, recalculando `markup` e `profit_margin` derivados do preço final ao salvar.
 
 #### Scenario: Edição com dados válidos
-- **WHEN** o usuário edita um produto existente e submete dados válidos incluindo `unit` e `profit_margin`
-- **THEN** o sistema atualiza o registro em `Products` com os novos valores, recalcula `markup` e `final_price` usando a `profit_margin` do produto, e atualiza `updated_at`
+- **WHEN** o usuário edita um produto existente e submete dados válidos incluindo `unit` e `final_price >= CMV`
+- **THEN** o sistema atualiza o registro em `Products` com os novos valores, recalcula `markup` e `profit_margin` derivados do `final_price`, e atualiza `updated_at`
+
+#### Scenario: Preço abaixo do custo na edição
+- **WHEN** o usuário submete `final_price < CMV`
+- **THEN** o sistema retorna erro de prejuízo sem alterar o registro
 
 #### Scenario: Produto inexistente
 - **WHEN** o comando `update_product` é invocado com `id` que não existe
@@ -86,19 +94,23 @@ O sistema SHALL embutir a taxa de cartão no preço dos produtos como custo vari
 
 ### Requirement: Precificação automática no formulário
 
-O sistema SHALL calcular e exibir em tempo real CMV, Markup% e Preço Final conforme o usuário edita `cost_price`, `expected_loss_rate` e `profit_margin`, usando as taxas de `get_pricing_rates` (cujo `cv` já inclui a taxa de cartão embutida) e a margem individual do produto.
+O sistema SHALL permitir que o operador informe o **preço final** e SHALL calcular e exibir em tempo real o CMV e a **Margem de lucro derivada** conforme o usuário edita `cost_price`, `expected_loss_rate` e `final_price`, usando as taxas de `get_pricing_rates` (cujo `cv` já inclui a taxa de cartão embutida). O sistema NÃO SHALL exibir a porcentagem de markup no formulário (o `markup` continua sendo derivado e persistido, apenas não é mostrado). O preço de venda não SHALL ser recalculado automaticamente a partir do histórico da empresa.
 
 #### Scenario: Cálculo com histórico de vendas disponível
-- **WHEN** o formulário é aberto e existem vendas nos últimos 12 meses
-- **THEN** CV% é derivado de (despesas variáveis de `Financial_Entries` + taxas de cartão pagas de `Sale_Payments`) ÷ faturamento dos últimos 12 meses; DF% é derivado das despesas fixas ÷ faturamento; `profit_margin` é pré-populada com `get_realized_margin`
+- **WHEN** o formulário é aberto para um novo produto e existem vendas nos últimos 12 meses
+- **THEN** CV% é derivado de (despesas variáveis de `Financial_Entries` + taxas de cartão pagas de `Sale_Payments`) ÷ faturamento dos últimos 12 meses; DF% é derivado das despesas fixas ÷ faturamento; o campo `final_price` é pré-populado com um **preço sugerido** derivado da margem realizada (`get_realized_margin`)
 
 #### Scenario: Cálculo sem histórico de vendas
 - **WHEN** o formulário é aberto e não existem vendas nos últimos 12 meses
-- **THEN** CV% = 0, DF% = 0 e `profit_margin = 0`; o formulário exibe aviso de que as taxas não puderam ser calculadas
+- **THEN** CV% = 0, DF% = 0 e o preço sugerido recai sobre o preço de equilíbrio (margem zero); o formulário exibe aviso de que as taxas não puderam ser calculadas
 
 #### Scenario: Atualização em tempo real
-- **WHEN** o usuário altera `cost_price`, `expected_loss_rate` ou `profit_margin`
-- **THEN** CMV, Markup% e Preço Final são recalculados instantaneamente no cliente sem nova requisição, usando a `profit_margin` do produto em vez da margem global
+- **WHEN** o usuário altera `cost_price`, `expected_loss_rate` ou `final_price`
+- **THEN** o CMV e a Margem de lucro derivada são recalculados instantaneamente no cliente sem nova requisição, mantendo o `final_price` informado pelo operador como entrada estável
+
+#### Scenario: Markup não exibido no formulário
+- **WHEN** o formulário de produto é renderizado em qualquer estado
+- **THEN** a porcentagem de markup não é exibida; apenas o custo, o CMV e a margem derivada aparecem como leitura
 
 ### Requirement: Cálculo automático de taxa de perda
 
@@ -118,19 +130,55 @@ O sistema SHALL calcular `expected_loss_rate` a partir do histórico de `Stock_M
 
 ### Requirement: Margem de lucro por produto
 
-O sistema SHALL armazenar uma `profit_margin` individual por produto, usada no cálculo de precificação em substituição à margem global de `Business_Settings`.
+O sistema SHALL armazenar uma `profit_margin` individual por produto, **derivada do preço final no momento do salvamento** e usada como leitura analítica, não mais como entrada da precificação.
 
-#### Scenario: profit_margin pré-populada na criação
+#### Scenario: profit_margin derivada do preço final
+- **WHEN** um produto é salvo com `final_price` válido
+- **THEN** o sistema persiste `profit_margin = 1 − cv − df − investment_rate − CMV/final_price` como snapshot do instante do salvamento
+
+#### Scenario: Preço sugerido pré-populado na criação
 - **WHEN** o formulário de criação de produto é aberto
-- **THEN** o campo `profit_margin` é pré-populado com o valor retornado por `get_realized_margin` (média dos últimos 12 meses de vendas fechadas)
+- **THEN** o campo de preço final é pré-populado com um preço sugerido derivado de `get_realized_margin` (média dos últimos 12 meses de vendas fechadas)
 
-#### Scenario: profit_margin sem histórico de vendas
+#### Scenario: Sugestão sem histórico de vendas
 - **WHEN** `get_realized_margin` retorna 0 por ausência de vendas fechadas nos últimos 12 meses
-- **THEN** o campo `profit_margin` é pré-populado com 0 e o formulário exibe aviso de que não há histórico disponível
+- **THEN** o preço sugerido recai sobre o preço de equilíbrio (margem zero) e o formulário exibe aviso de que não há histórico disponível
 
-#### Scenario: profit_margin editável
-- **WHEN** o operador altera manualmente o valor de `profit_margin` no formulário
-- **THEN** o valor informado pelo operador prevalece sobre a sugestão automática
+#### Scenario: Preço editável
+- **WHEN** o operador altera manualmente o valor do preço final no formulário
+- **THEN** o valor informado pelo operador prevalece sobre a sugestão automática e a margem derivada é recalculada
+
+### Requirement: Piso de custo e margem derivada do preço final
+
+O sistema SHALL derivar a margem de lucro do preço final via `computeMarginFromPrice`, que SHALL retornar `cmv`, `markup_percent`, `profit_margin` (podendo ser negativa), `min_price = CMV`, `break_even_price`, `below_cost` e `feasible`. O sistema SHALL tratar o CMV como piso de custo: preço abaixo do CMV é prejuízo e SHALL ser bloqueado; preço entre o CMV e o preço de equilíbrio gera margem negativa e SHALL ser comunicado como aviso.
+
+#### Scenario: Preço acima do equilíbrio gera margem positiva
+- **WHEN** `final_price > break_even_price` e `1 − cv − df − investment_rate > 0`
+- **THEN** `computeMarginFromPrice` retorna `feasible: true`, `below_cost: false` e `profit_margin > 0`
+
+#### Scenario: Preço abaixo do custo sinaliza prejuízo
+- **WHEN** `final_price < CMV`
+- **THEN** `computeMarginFromPrice` retorna `below_cost: true` e `feasible: false`, e o formulário exibe aviso de prejuízo e bloqueia o salvamento
+
+#### Scenario: Preço entre custo e equilíbrio gera margem negativa
+- **WHEN** `CMV <= final_price < break_even_price`
+- **THEN** `computeMarginFromPrice` retorna `profit_margin < 0` com `below_cost: false`, e o formulário exibe aviso de margem negativa indicando o preço de equilíbrio
+
+#### Scenario: Taxas consomem todo o preço
+- **WHEN** `cv + df + investment_rate >= 1`
+- **THEN** `computeMarginFromPrice` retorna `feasible: false` com `break_even_price` indefinido (nenhum preço positivo gera margem ≥ 0), e o formulário comunica que as taxas já consomem o preço
+
+### Requirement: Validação dinâmica do campo de preço final
+
+O sistema SHALL restringir dinamicamente o valor mínimo aceito no campo de preço final do formulário de produto ao CMV atual (`cost_price / (1 − expected_loss_rate)`), recalculado conforme `cost_price` e `expected_loss_rate` mudam.
+
+#### Scenario: Mínimo do campo derivado do CMV atual
+- **WHEN** o formulário de produto é renderizado com `cost_price` e `expected_loss_rate`
+- **THEN** o atributo de valor mínimo do campo de preço final corresponde ao CMV calculado
+
+#### Scenario: Mínimo acompanha mudança de custo ou perda
+- **WHEN** o usuário altera `cost_price` ou `expected_loss_rate`
+- **THEN** o valor mínimo do campo de preço final é recalculado para refletir o novo CMV
 
 ### Requirement: Cálculo de margem realizada
 
@@ -144,34 +192,3 @@ O sistema SHALL calcular a margem de lucro média realizada dos últimos 12 mese
 - **WHEN** não há vendas fechadas nos últimos 12 meses
 - **THEN** o command retorna `0` sem erro
 
-### Requirement: Detecção e aviso de margem inviável
-
-O sistema SHALL detectar quando a combinação `cv + df + investment_rate + profit_margin` é maior ou igual a 1 (denominador do markup ≤ 0) e SHALL comunicar a inviabilidade ao usuário, indicando a margem máxima possível, em vez de exibir um preço final igual a zero sem explicação. A função de cálculo `computePrice` SHALL retornar, no `PriceBreakdown`, um indicador de viabilidade (`feasible`) e a margem máxima possível (`max_margin = max(0, 1 − cv − df − investment_rate)`).
-
-#### Scenario: Margem viável retorna feasible verdadeiro
-- **WHEN** `cv + df + investment_rate + profit_margin < 1`
-- **THEN** `computePrice` retorna `feasible: true`, `final_price > 0` e `max_margin = max(0, 1 − cv − df − investment_rate)`
-
-#### Scenario: Margem inviável retorna feasible falso
-- **WHEN** `cv + df + investment_rate + profit_margin >= 1`
-- **THEN** `computePrice` retorna `feasible: false`, `final_price: 0` e `max_margin = max(0, 1 − cv − df − investment_rate)`
-
-#### Scenario: Formulário exibe aviso em vez de preço zero
-- **WHEN** o usuário informa uma margem que torna o cálculo inviável (`feasible: false`)
-- **THEN** o formulário exibe um aviso de margem inviável indicando a margem máxima possível (`max_margin`) no lugar da linha de preço final com `R$ 0,00`
-
-#### Scenario: Margem máxima zerada quando taxas já consomem o preço
-- **WHEN** `cv + df + investment_rate >= 1`
-- **THEN** `computePrice` retorna `max_margin: 0` e `feasible: false` sem erro, e o formulário comunica que as taxas já consomem o preço
-
-### Requirement: Validação dinâmica do campo de margem
-
-O sistema SHALL restringir dinamicamente o valor máximo aceito no campo de margem de lucro do formulário de produto ao máximo viável `(1 − cv − df − investment_rate)`, em pontos percentuais, em vez de um limite fixo.
-
-#### Scenario: Limite máximo do campo derivado das taxas atuais
-- **WHEN** o formulário de produto é renderizado com taxas `cv`, `df` e `investment_rate`
-- **THEN** o atributo de valor máximo do campo de margem corresponde a `floor((1 − cv − df − investment_rate) × 100)` pontos percentuais
-
-#### Scenario: Limite acompanha mudança nas taxas
-- **WHEN** as taxas de precificação usadas pelo formulário mudam
-- **THEN** o valor máximo do campo de margem é recalculado para refletir o novo máximo viável

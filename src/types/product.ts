@@ -27,3 +27,13 @@ export interface PriceBreakdown {
   feasible: boolean
   max_margin: number
 }
+
+export interface MarginBreakdown {
+  cmv: number
+  markup_percent: number
+  profit_margin: number
+  min_price: number
+  break_even_price: number
+  below_cost: boolean
+  feasible: boolean
+}
