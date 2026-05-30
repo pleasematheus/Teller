@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { type AuthUser } from "@/App";
 import cashierIcon from "@/assets/cashier-svgrepo-com.svg";
 
@@ -127,7 +128,11 @@ export function CompanySetup({ user, onComplete }: Props) {
               disabled={loading}
               className="h-10 w-full mt-2 bg-teller-accent hover:bg-teller-accent-hover text-teller-bg font-semibold text-sm cursor-pointer disabled:opacity-50"
             >
-              {loading ? "Salvando..." : "Salvar e continuar"}
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <Spinner aria-hidden />Salvando...
+                </span>
+              ) : "Salvar e continuar"}
             </Button>
           </form>
         </div>

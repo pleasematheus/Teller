@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { invoke } from "@tauri-apps/api/core"
+import { Spinner } from "@/components/ui/spinner"
 import type { StockMovement } from "@/types/stock"
 import type { Product } from "@/types/product"
 
@@ -67,7 +68,9 @@ export function MovementHistory() {
       )}
 
       {productId && loading && (
-        <p className="text-teller-muted text-sm text-center py-8">Carregando...</p>
+        <p className="flex items-center justify-center gap-2 text-teller-muted text-sm py-8">
+          <Spinner aria-hidden />Carregando...
+        </p>
       )}
 
       {productId && !loading && movements.length === 0 && (

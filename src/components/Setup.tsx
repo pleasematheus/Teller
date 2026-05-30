@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import cashierIcon from "@/assets/cashier-svgrepo-com.svg";
 
 type Props = {
@@ -119,7 +120,11 @@ export function Setup({ onComplete }: Props) {
               disabled={loading}
               className="h-10 w-full mt-2 bg-teller-accent hover:bg-teller-accent-hover text-teller-bg font-semibold text-sm cursor-pointer disabled:opacity-50"
             >
-              {loading ? "Criando..." : "Criar conta"}
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <Spinner aria-hidden />Criando...
+                </span>
+              ) : "Criar conta"}
             </Button>
           </form>
         </div>

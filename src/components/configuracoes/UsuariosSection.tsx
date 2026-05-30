@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { Spinner } from "@/components/ui/spinner";
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -130,7 +131,9 @@ export function UsuariosSection({ user }: Props) {
         {error && <p className="text-teller-danger text-xs mb-3">{error}</p>}
 
         {loading ? (
-          <p className="text-teller-muted text-sm">Carregando...</p>
+          <p className="flex items-center gap-2 text-teller-muted text-sm">
+            <Spinner aria-hidden />Carregando...
+          </p>
         ) : (
           <div className="flex flex-col divide-y divide-teller-border border border-teller-border rounded-lg overflow-hidden">
             {users.map((u) => (

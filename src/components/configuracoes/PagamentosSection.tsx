@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { Spinner } from "@/components/ui/spinner";
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -223,7 +224,9 @@ export function PagamentosSection() {
         </div>
 
         {loadingMethods ? (
-          <p className="text-teller-muted text-sm">Carregando...</p>
+          <p className="flex items-center gap-2 text-teller-muted text-sm">
+            <Spinner aria-hidden />Carregando...
+          </p>
         ) : methods.length === 0 ? (
           <p className="text-teller-muted text-sm">Nenhuma forma de pagamento cadastrada.</p>
         ) : (
@@ -342,7 +345,9 @@ export function PagamentosSection() {
       </div>
 
       {loadingFees ? (
-        <p className="text-teller-muted text-sm">Carregando...</p>
+        <p className="flex items-center gap-2 text-teller-muted text-sm">
+          <Spinner aria-hidden />Carregando...
+        </p>
       ) : (
         <div className="flex flex-col gap-4">
           {feesEnabled && feeRows.length > 0 && (
