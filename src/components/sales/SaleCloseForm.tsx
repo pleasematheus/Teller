@@ -19,14 +19,6 @@ type Props = {
   onSaved: () => void
 }
 
-function computeNetAmount(amount: number, methodId: number, installments: number, methods: PaymentMethod[]): number {
-  const method = methods.find((m) => m.id === methodId)
-  if (!method) return amount
-  const fee = method.fees.find((f) => f.installments === installments)
-  if (!fee) return amount
-  return amount * (1 - fee.fee_percent) - fee.fixed_fee
-}
-
 export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
   const [methods, setMethods] = useState<PaymentMethod[]>([])
   const [payments, setPayments] = useState<PaymentLine[]>([{ methodId: 0, installments: 1, amount: "" }])
@@ -120,8 +112,6 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
           {payments.map((p, idx) => {
             const method = methods.find((m) => m.id === p.methodId)
             const hasFees = (method?.fees.length ?? 0) > 0
-            const amountNum = parseFloat(p.amount) || 0
-            const netAmount = amountNum > 0 ? computeNetAmount(amountNum, p.methodId, p.installments, methods) : null
 
             return (
               <div key={idx} className="flex flex-col gap-1.5">
@@ -149,7 +139,7 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
                     >
                       {method?.fees.map((fee) => (
                         <option key={fee.installments} value={fee.installments}>
-                          {fee.installments}x ({(fee.fee_percent * 100).toFixed(2)}%)
+                          {fee.installments}x
                         </option>
                       ))}
                     </select>
@@ -174,11 +164,6 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
                     </button>
                   )}
                 </div>
-                {hasFees && netAmount !== null && netAmount > 0 && (
-                  <p className="text-xs text-teller-muted pl-1">
-                    você recebe: {brl.format(netAmount)}
-                  </p>
-                )}
               </div>
             )
           })}
