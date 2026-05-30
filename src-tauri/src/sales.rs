@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::DbState;
+use crate::products::compute_cmv_from_components;
 
 #[derive(Deserialize)]
 pub struct SaleItemInput {
@@ -371,16 +372,23 @@ pub fn do_close_sale_work(
         .map_err(|e| e.to_string())?
     };
     for (sp_id, pid) in sp_ids {
-        let product_cost: f64 = conn
-            .query_row(
-                r#"SELECT cost_price FROM "Products" WHERE id = ?"#,
-                params![pid],
-                |r| r.get(0),
-            )
-            .unwrap_or(0.0);
+        let cmv: f64 = match compute_cmv_from_components(conn, pid) {
+            Ok(Some(derived)) => derived,
+            _ => {
+                let (cost, loss): (f64, f64) = conn
+                    .query_row(
+                        r#"SELECT CAST(cost_price AS DOUBLE), CAST(expected_loss_rate AS DOUBLE)
+                           FROM "Products" WHERE id = ?"#,
+                        params![pid],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .unwrap_or((0.0, 0.0));
+                if loss < 1.0 { cost / (1.0 - loss) } else { 0.0 }
+            }
+        };
         conn.execute(
             r#"UPDATE "Sales_Products" SET cost_price = ? WHERE id = ?"#,
-            params![product_cost, sp_id],
+            params![cmv, sp_id],
         )
         .map_err(|e| e.to_string())?;
     }

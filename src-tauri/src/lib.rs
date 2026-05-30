@@ -12,6 +12,7 @@ pub mod stock;
 
 pub use db::{DbState, ensure_financial_entries_expense_subtype, ensure_label_column,
              ensure_loss_mode_column, ensure_profit_margin_column,
+             ensure_purchase_items_loss_rate,
              ensure_sale_payments_fee_snapshot, ensure_sales_products_cost_price,
              ensure_transaction_fees_installments, ensure_unit_column,
              ensure_user_settings_table, init_schema,
@@ -45,6 +46,7 @@ pub fn run() {
             ensure_financial_entries_expense_subtype(&conn).map_err(&io_err)?;
             ensure_transaction_fees_installments(&conn).map_err(&io_err)?;
             ensure_sale_payments_fee_snapshot(&conn).map_err(&io_err)?;
+            ensure_purchase_items_loss_rate(&conn).map_err(&io_err)?;
             normalize_transaction_fee_installments(&conn).map_err(&io_err)?;
             app.manage(DbState(Mutex::new(conn)));
             Ok(())

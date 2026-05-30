@@ -82,6 +82,14 @@ pub fn ensure_financial_entries_expense_subtype(conn: &Connection) -> Result<(),
     .map_err(|e| e.to_string())
 }
 
+pub fn ensure_purchase_items_loss_rate(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"ALTER TABLE "Purchase_Items" ADD COLUMN IF NOT EXISTS
+           "loss_rate" DECIMAL(5,4)"#,
+    )
+    .map_err(|e| e.to_string())
+}
+
 pub fn ensure_business_settings_nullable(conn: &Connection) -> Result<(), String> {
     // Idempotent: ignore errors (DuckDB may error if column is already nullable).
     let _ = conn.execute_batch(
@@ -277,6 +285,7 @@ pub(crate) fn test_db() -> Connection {
     ensure_label_column(&conn).unwrap();
     ensure_sales_products_cost_price(&conn).unwrap();
     ensure_financial_entries_expense_subtype(&conn).unwrap();
+    ensure_purchase_items_loss_rate(&conn).unwrap();
     // Migration functions are no-ops for fresh in-memory DBs (schema.sql already has all columns).
     // They run in production via lib.rs setup for existing on-disk databases.
     conn

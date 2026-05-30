@@ -89,6 +89,28 @@ export function computeMaxDiscount(
   return { maxDiscountValue, maxDiscountPct }
 }
 
+type ComponentForCmv = {
+  cost_price: number
+  expected_loss_rate: number
+  quantity: number
+}
+
+/**
+ * Derives CMV from a product's bill of materials.
+ * Returns null when: no components, or any component has expected_loss_rate >= 1 (undefined).
+ * Callers check components.length to distinguish "no ficha técnica" from "invalid component".
+ */
+export function computeCmvFromComponents(components: ComponentForCmv[]): number | null {
+  if (components.length === 0) return null
+  for (const c of components) {
+    if (c.expected_loss_rate >= 1) return null
+  }
+  return components.reduce(
+    (sum, c) => sum + (c.cost_price / (1 - c.expected_loss_rate)) * c.quantity,
+    0,
+  )
+}
+
 type WithDiscount = { quantity: number; final_price: number; discount: number }
 
 export function applyGlobalDiscount<T extends WithDiscount>(

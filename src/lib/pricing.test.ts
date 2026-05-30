@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { computePrice, computeMaxDiscount, applyGlobalDiscount, computeMarginFromPrice } from "./pricing"
+import { computePrice, computeMaxDiscount, applyGlobalDiscount, computeMarginFromPrice, computeCmvFromComponents } from "./pricing"
 import type { PricingRates } from "@/types/product"
 
 const zeroRates: PricingRates = {
@@ -183,6 +183,36 @@ describe("computeMaxDiscount", () => {
     const result = computeMaxDiscount(product, realRates)
     expect(result.maxDiscountValue).toBeCloseTo(70)
     expect(result.maxDiscountPct).toBeCloseTo(70 / 200)
+  })
+})
+
+describe("computeCmvFromComponents", () => {
+  it("rollup com componentes válidos", () => {
+    // child cost=10, loss=0.2 → CMV/unit = 10/0.8 = 12.5; qty=2 → 25.0
+    const components = [{ cost_price: 10, expected_loss_rate: 0.2, quantity: 2 }]
+    expect(computeCmvFromComponents(components)).toBeCloseTo(25.0)
+  })
+
+  it("dois componentes somam corretamente", () => {
+    const components = [
+      { cost_price: 10, expected_loss_rate: 0.2, quantity: 2 }, // 25.0
+      { cost_price: 5, expected_loss_rate: 0.0, quantity: 3 },  // 15.0
+    ]
+    expect(computeCmvFromComponents(components)).toBeCloseTo(40.0)
+  })
+
+  it("sem componentes retorna null (fallback para custo próprio)", () => {
+    expect(computeCmvFromComponents([])).toBeNull()
+  })
+
+  it("componente com perda=1 retorna null (CMV indefinido)", () => {
+    const components = [{ cost_price: 10, expected_loss_rate: 1, quantity: 1 }]
+    expect(computeCmvFromComponents(components)).toBeNull()
+  })
+
+  it("componente com perda >= 1 retorna null", () => {
+    const components = [{ cost_price: 10, expected_loss_rate: 1.5, quantity: 1 }]
+    expect(computeCmvFromComponents(components)).toBeNull()
   })
 })
 

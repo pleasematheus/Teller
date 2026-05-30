@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS "Purchase_Items" (
     "box_qty"       DECIMAL(10,4),
     "unit_qty"      DECIMAL(10,4),
     "creates_stock" BOOLEAN       NOT NULL DEFAULT TRUE,
+    "loss_rate"     DECIMAL(5,4),
     "created_at"    TIMESTAMP     NOT NULL,
     FOREIGN KEY ("purchase_id") REFERENCES "Purchases" ("id"),
     FOREIGN KEY ("product_id")  REFERENCES "Products"  ("id")
