@@ -305,7 +305,7 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
             id="profit-margin"
             type="number"
             min={0}
-            max={99}
+            max={Math.floor(breakdown.max_margin * 100)}
             step="0.01"
             value={profitMargin}
             onChange={(e) => setProfitMargin(e.target.value)}
@@ -324,14 +324,22 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
             <span className="text-teller-muted">CMV</span>
             <span className="text-teller-text">{brl.format(breakdown.cmv)}</span>
           </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-teller-muted">Markup</span>
-            <span className="text-teller-text">{pct.format(breakdown.markup_percent)}</span>
-          </div>
-          <div className="flex justify-between text-sm font-medium">
-            <span className="text-teller-text">Preço final</span>
-            <span className="text-teller-accent">{brl.format(breakdown.final_price)}</span>
-          </div>
+          {breakdown.feasible ? (
+            <>
+              <div className="flex justify-between text-sm">
+                <span className="text-teller-muted">Markup</span>
+                <span className="text-teller-text">{pct.format(breakdown.markup_percent)}</span>
+              </div>
+              <div className="flex justify-between text-sm font-medium">
+                <span className="text-teller-text">Preço final</span>
+                <span className="text-teller-accent">{brl.format(breakdown.final_price)}</span>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-red-500 mt-1">
+              Margem inviável: máximo possível ≈ {(breakdown.max_margin * 100).toFixed(1)}%
+            </p>
+          )}
         </div>
 
         {/* Components — only for sellable products being edited */}

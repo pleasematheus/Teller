@@ -189,10 +189,14 @@ pub fn get_realized_margin(state: State<DbState>) -> Result<f64, String> {
 pub fn list_products(state: State<DbState>) -> Result<Vec<Product>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
+    // CAST decimals to DOUBLE: duckdb-rs 1.4.4 reads DECIMAL(5,4) directly as f64 incorrectly
+    // (returns 0). Casting in SQL works for both legacy DECIMAL and new DOUBLE columns.
     let mut stmt = conn
         .prepare(r#"
             SELECT id, name, description, active, sellable,
-                   cost_price, markup, final_price, expected_loss_rate, unit, profit_margin
+                   CAST(cost_price AS DOUBLE), CAST(markup AS DOUBLE),
+                   CAST(final_price AS DOUBLE), CAST(expected_loss_rate AS DOUBLE),
+                   unit, CAST(profit_margin AS DOUBLE)
             FROM "Products"
             ORDER BY name
         "#)
@@ -468,6 +472,33 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "Produto Novo");
+    }
+
+    #[test]
+    fn product_roundtrips_fractional_profit_margin_and_loss_rate() {
+        // Regression: duckdb-rs 1.4.4 reads DECIMAL(5,4) as f64 without applying scale,
+        // returning 0 / wrong values. DOUBLE columns round-trip correctly.
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Products"
+               (name, active, sellable, markup, cost_price, final_price, expected_loss_rate,
+                profit_margin, updated_at, created_at)
+               VALUES ('Margem', true, true, 1.25, 10.0, 12.5, 0.0732,
+                       0.3456, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        )
+        .unwrap();
+        let (margin, loss, markup): (f64, f64, f64) = conn
+            .query_row(
+                r#"SELECT profit_margin, expected_loss_rate, markup
+                   FROM "Products" WHERE name = 'Margem'"#,
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert!((margin - 0.3456).abs() < 1e-9, "profit_margin got {}", margin);
+        assert!((loss - 0.0732).abs() < 1e-9, "expected_loss_rate got {}", loss);
+        assert!((markup - 1.25).abs() < 1e-9, "markup got {}", markup);
     }
 
     #[test]

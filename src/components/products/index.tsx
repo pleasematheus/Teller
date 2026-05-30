@@ -116,7 +116,7 @@ export function Products() {
             product={formContent.kind === "edit" ? formContent.product : null}
             rates={rates}
             onCancel={closeForm}
-            onSaved={() => { loadProducts(); closeForm() }}
+            onSaved={async () => { await loadProducts(); closeForm() }}
           />
         </div>
       )}

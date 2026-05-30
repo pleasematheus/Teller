@@ -1,3 +1,12 @@
+# Approach
+
+1. Read existing files before writing. Don't re-read unless changed.
+2. Thorough in reasoning, concise in output.
+3. Skip files over 100KB unless required.
+4. No sycophantic openers or closing fluff.
+5. No emojis or em-dashes.
+6. Do not guess APIs, versions, flags, commit SHAs, or package names. Verify by reading code or docs before asserting.
+
 # Teller — Diretrizes do Projeto
 
 ## Programação Funcional
@@ -21,6 +30,8 @@
 - Frontend: React 19, TypeScript, Tailwind 4, shadcn/ui, Vitest
 - Backend: Tauri 2, Rust, DuckDB (`duckdb = "1.4.4" bundled`)
 - Testes Rust: `cargo test`; Testes frontend: `bun run test` (Vitest)
+
+---
 
 <!-- rtk-instructions v2 -->
 # RTK (Rust Token Killer) - Token-Optimized Commands

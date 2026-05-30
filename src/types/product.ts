@@ -24,4 +24,6 @@ export interface PriceBreakdown {
   cmv: number
   markup_percent: number
   final_price: number
+  feasible: boolean
+  max_margin: number
 }

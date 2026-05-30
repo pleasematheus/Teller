@@ -6,8 +6,10 @@ export function computePrice(
   rates: PricingRates,
   profitMargin?: number,
 ): PriceBreakdown {
+  const max_margin = Math.max(0, 1 - (rates.cv + rates.df + rates.investment_rate))
+
   if (lossRate >= 1 || lossRate < 0) {
-    return { cmv: 0, markup_percent: 0, final_price: 0 }
+    return { cmv: 0, markup_percent: 0, final_price: 0, feasible: false, max_margin }
   }
 
   const cmv = costPrice / (1 - lossRate)
@@ -15,13 +17,13 @@ export function computePrice(
   const denominator = 1 - (rates.cv + rates.df + rates.investment_rate + margin)
 
   if (denominator <= 0) {
-    return { cmv, markup_percent: 0, final_price: 0 }
+    return { cmv, markup_percent: 0, final_price: 0, feasible: false, max_margin }
   }
 
   const markup = 1 / denominator
   const final_price = cmv * markup
 
-  return { cmv, markup_percent: markup, final_price }
+  return { cmv, markup_percent: markup, final_price, feasible: true, max_margin }
 }
 
 type ProductForDiscount = {

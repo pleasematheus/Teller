@@ -27,13 +27,13 @@ CREATE TABLE IF NOT EXISTS "Products" (
     "name"               VARCHAR       NOT NULL,
     "description"        VARCHAR,
     "active"             BOOLEAN       NOT NULL DEFAULT TRUE,
-    "markup"             DECIMAL(5,4)  NOT NULL,
-    "cost_price"         DECIMAL(10,2) NOT NULL DEFAULT 0,
-    "final_price"        DECIMAL(10,2) NOT NULL,
-    "expected_loss_rate" DECIMAL(5,4)  NOT NULL DEFAULT 0,
+    "markup"             DOUBLE        NOT NULL,
+    "cost_price"         DOUBLE        NOT NULL DEFAULT 0,
+    "final_price"        DOUBLE        NOT NULL,
+    "expected_loss_rate" DOUBLE        NOT NULL DEFAULT 0,
     "sellable"           BOOLEAN       NOT NULL DEFAULT TRUE,
     "unit"               VARCHAR       NOT NULL DEFAULT 'unidade' CHECK (unit IN ('unidade','rolo','bobina','ml','folha')),
-    "profit_margin"      DECIMAL(5,4)  NOT NULL DEFAULT 0,
+    "profit_margin"      DOUBLE        NOT NULL DEFAULT 0,
     "updated_at"         TIMESTAMP     NOT NULL,
     "created_at"         TIMESTAMP     NOT NULL
 );

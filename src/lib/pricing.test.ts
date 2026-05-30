@@ -57,6 +57,7 @@ describe("computePrice", () => {
     const absurdRates: PricingRates = { ...realRates, profit_margin: 0.9 }
     const result = computePrice(100, 0, absurdRates)
     expect(result.final_price).toBe(0)
+    expect(result.feasible).toBe(false)
   })
 
   it("profitMargin explícito sobrepõe rates.profit_margin", () => {
@@ -64,6 +65,35 @@ describe("computePrice", () => {
     // denominator = 1 - (0.1+0.05+0.02+0.3) = 0.53 → markup ≈ 1.8868
     const result = computePrice(100, 0, realRates, 0.3)
     expect(result.markup_percent).toBeCloseTo(1 / 0.53, 5)
+  })
+
+  it("margem viável retorna feasible: true e max_margin correto", () => {
+    // realRates: cv=0.1, df=0.05, invest=0.02 → max_margin = 1-0.17 = 0.83
+    const result = computePrice(100, 0, realRates, 0.3)
+    expect(result.feasible).toBe(true)
+    expect(result.final_price).toBeGreaterThan(0)
+    expect(result.max_margin).toBeCloseTo(0.83, 5)
+  })
+
+  it("margem inviável (Σ% >= 1) retorna feasible: false e max_margin correto", () => {
+    // realRates: cv=0.1, df=0.05, invest=0.02, margin=0.9 → Σ=1.07 > 1
+    const result = computePrice(100, 0, realRates, 0.9)
+    expect(result.feasible).toBe(false)
+    expect(result.final_price).toBe(0)
+    expect(result.max_margin).toBeCloseTo(0.83, 5)
+  })
+
+  it("cv+df+invest >= 1 retorna max_margin: 0 e feasible: false", () => {
+    const heavyRates: PricingRates = { cv: 0.6, df: 0.3, investment_rate: 0.2, no_sales_history: false }
+    const result = computePrice(100, 0, heavyRates, 0)
+    expect(result.feasible).toBe(false)
+    expect(result.max_margin).toBe(0)
+  })
+
+  it("lossRate inválido retorna feasible: false e max_margin correto", () => {
+    const result = computePrice(100, 1, realRates)
+    expect(result.feasible).toBe(false)
+    expect(result.max_margin).toBeCloseTo(0.83, 5)
   })
 })
 
