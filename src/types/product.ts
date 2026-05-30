@@ -10,6 +10,7 @@ export interface Product {
   expected_loss_rate: number
   unit: string
   profit_margin: number
+  loss_mode: "manual" | "auto"
 }
 
 export interface PricingRates {
