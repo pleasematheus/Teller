@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
 import type { Sale, PaymentMethod, SalePaymentInput } from "@/types/sale"
 
@@ -137,6 +138,8 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
                       </option>
                     ))}
                   </select>
+
+                  {methods.length === 0 && <Spinner aria-hidden className="text-teller-muted shrink-0" />}
 
                   {hasFees && (
                     <select

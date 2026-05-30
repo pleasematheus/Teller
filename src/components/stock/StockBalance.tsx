@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import type { StockItem, ProductComponent } from "@/types/stock"
 import type { Product } from "@/types/product"
 
@@ -78,7 +79,9 @@ export function StockBalance({ onAdjust }: Props) {
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-teller-muted text-sm">Carregando...</p>
+        <p className="flex items-center gap-2 text-teller-muted text-sm">
+          <Spinner aria-hidden />Carregando...
+        </p>
       </div>
     )
   }

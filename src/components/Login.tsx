@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { type AuthUser } from "@/App";
 import cashierIcon from "@/assets/cashier-svgrepo-com.svg";
 
@@ -126,7 +127,11 @@ export function Login({ onSuccess }: Props) {
               disabled={loading || lookupError}
               className="h-10 w-full mt-2 bg-teller-accent hover:bg-teller-accent-hover text-teller-bg font-semibold text-sm cursor-pointer disabled:opacity-50"
             >
-              {loading ? "Entrando..." : "Entrar"}
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <Spinner aria-hidden />Entrando...
+                </span>
+              ) : "Entrar"}
             </Button>
           </form>
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 
 type BusinessInfo = {
@@ -69,7 +70,9 @@ export function EmpresaSection() {
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-teller-muted text-sm">Carregando...</p>
+        <p className="flex items-center gap-2 text-teller-muted text-sm">
+          <Spinner aria-hidden />Carregando...
+        </p>
       </div>
     );
   }

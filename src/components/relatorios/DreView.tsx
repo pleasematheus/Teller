@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { Spinner } from "@/components/ui/spinner";
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
 import type { DateRange } from "react-day-picker";
 import { DateRangePicker } from "./DateRangePicker";
@@ -86,6 +87,7 @@ export function DreView({ onBack }: Props) {
           </button>
           <span className="text-teller-border">·</span>
           <span className="text-sm font-medium text-teller-text">Mini-DRE</span>
+          {loading && <Spinner aria-hidden className="text-teller-muted" />}
         </div>
 
         <DateRangePicker value={range} onChange={setRange} />
