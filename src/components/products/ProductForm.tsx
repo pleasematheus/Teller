@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { computePrice } from "@/lib/pricing"
+import { computePrice, computeMarginFromPrice } from "@/lib/pricing"
 import type { Product, PricingRates } from "@/types/product"
 import type { ProductComponent } from "@/types/stock"
 
@@ -32,7 +32,7 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
   const [costPrice, setCostPrice] = useState(product ? String(product.cost_price) : "")
   const [lossRatePct, setLossRatePct] = useState(product ? String(product.expected_loss_rate * 100) : "0")
   const [lossMode, setLossMode] = useState<LossMode>("manual")
-  const [profitMargin, setProfitMargin] = useState("")
+  const [finalPrice, setFinalPrice] = useState(product ? String(product.final_price) : "")
   const [noMarginHistory, setNoMarginHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -45,18 +45,43 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
   const [addingComponent, setAddingComponent] = useState(false)
   const [editingQty, setEditingQty] = useState<Record<number, string>>({})
 
+  const parsedCost = parseFloat(costPrice) || 0
+  const parsedLossRate = (parseFloat(lossRatePct) || 0) / 100
+  const parsedFinalPrice = parseFloat(finalPrice) || 0
+
+  // CMV derivado dinamicamente — usado como mínimo do input de preço
+  const currentCmv = parsedLossRate < 1 && parsedLossRate >= 0
+    ? parsedCost / (1 - parsedLossRate)
+    : 0
+
+  const breakdown = useMemo(
+    () => computeMarginFromPrice(parsedCost, parsedLossRate, parsedFinalPrice, rates),
+    [parsedCost, parsedLossRate, parsedFinalPrice, rates],
+  )
+
   useEffect(() => {
     if (product) {
-      setProfitMargin(String((product.profit_margin * 100).toFixed(2)))
+      // Edição: usa o preço final persistido
+      setFinalPrice(String(product.final_price))
     } else {
+      // Criação: sugere preço derivado da margem realizada
       invoke<number>("get_realized_margin")
         .then((rate) => {
-          setProfitMargin(String((rate * 100).toFixed(2)))
-          setNoMarginHistory(rate === 0)
+          if (rate === 0) {
+            setNoMarginHistory(true)
+            // Sem histórico: sugestão é o preço de equilíbrio (margem zero)
+            // Será recalculado quando cost/loss mudarem; por ora deixamos em branco para o usuário preencher
+            setFinalPrice("")
+          } else {
+            setNoMarginHistory(false)
+            // Preço sugerido = computePrice com a margem realizada
+            const suggested = computePrice(parsedCost, parsedLossRate, rates, rate)
+            setFinalPrice(suggested.final_price > 0 ? suggested.final_price.toFixed(2) : "")
+          }
         })
         .catch(() => {
-          setProfitMargin("0")
           setNoMarginHistory(true)
+          setFinalPrice("")
         })
     }
 
@@ -71,16 +96,8 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
           .catch(() => {})
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product])
-
-  const parsedCost = parseFloat(costPrice) || 0
-  const parsedLossRate = (parseFloat(lossRatePct) || 0) / 100
-  const parsedProfitMargin = (parseFloat(profitMargin) || 0) / 100
-
-  const breakdown = useMemo(
-    () => computePrice(parsedCost, parsedLossRate, rates, parsedProfitMargin),
-    [parsedCost, parsedLossRate, rates, parsedProfitMargin],
-  )
 
   const handleSellableChange = (val: boolean) => {
     setSellable(val)
@@ -146,6 +163,12 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+
+    if (breakdown.below_cost) {
+      setError("Preço abaixo do custo: o preço final não pode ser inferior ao CMV.")
+      return
+    }
+
     setSaving(true)
 
     const payload = {
@@ -156,9 +179,9 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
       unit,
       costPrice: parsedCost,
       markup: breakdown.markup_percent,
-      finalPrice: breakdown.final_price,
+      finalPrice: parsedFinalPrice,
       expectedLossRate: parsedLossRate,
-      profitMargin: parsedProfitMargin,
+      profitMargin: breakdown.profit_margin,
     }
 
     try {
@@ -174,6 +197,8 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
       setSaving(false)
     }
   }
+
+  const overheadSaturated = (rates.cv + rates.df + rates.investment_rate) >= 1
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -293,23 +318,22 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
           )}
         </div>
 
-        {/* Profit margin */}
+        {/* Final price */}
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="profit-margin">Margem de lucro (%)</Label>
+          <Label htmlFor="final-price">Preço final (R$) *</Label>
           {noMarginHistory && (
             <p className="text-xs text-amber-500">
-              Sem histórico de vendas — margem sugerida indisponível.
+              Sem histórico de vendas — informe o preço manualmente.
             </p>
           )}
           <Input
-            id="profit-margin"
+            id="final-price"
             type="number"
-            min={0}
-            max={Math.floor(breakdown.max_margin * 100)}
+            min={currentCmv > 0 ? currentCmv.toFixed(4) : 0}
             step="0.01"
-            value={profitMargin}
-            onChange={(e) => setProfitMargin(e.target.value)}
-            placeholder="0"
+            value={finalPrice}
+            onChange={(e) => setFinalPrice(e.target.value)}
+            placeholder="0,00"
           />
         </div>
 
@@ -320,25 +344,36 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
               Sem histórico de vendas — CV% e DF% estão zerados.
             </p>
           )}
-          <div className="flex justify-between text-sm">
-            <span className="text-teller-muted">CMV</span>
-            <span className="text-teller-text">{brl.format(breakdown.cmv)}</span>
-          </div>
-          {breakdown.feasible ? (
+          {overheadSaturated ? (
+            <p className="text-xs text-red-500">
+              As taxas (CV + DF + Investimento) já consomem 100% do preço — nenhum preço gera margem positiva.
+            </p>
+          ) : (
             <>
               <div className="flex justify-between text-sm">
-                <span className="text-teller-muted">Markup</span>
-                <span className="text-teller-text">{pct.format(breakdown.markup_percent)}</span>
+                <span className="text-teller-muted">CMV</span>
+                <span className="text-teller-text">{brl.format(breakdown.cmv)}</span>
               </div>
-              <div className="flex justify-between text-sm font-medium">
-                <span className="text-teller-text">Preço final</span>
-                <span className="text-teller-accent">{brl.format(breakdown.final_price)}</span>
-              </div>
+              {breakdown.below_cost ? (
+                <p className="text-xs text-red-500 mt-1">
+                  Preço abaixo do custo — o preço final deve ser no mínimo {brl.format(breakdown.min_price)}.
+                </p>
+              ) : (
+                <>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-teller-muted">Margem</span>
+                    <span className={breakdown.profit_margin < 0 ? "text-amber-500" : "text-teller-text"}>
+                      {pct.format(breakdown.profit_margin)}
+                    </span>
+                  </div>
+                  {breakdown.profit_margin < 0 && (
+                    <p className="text-xs text-amber-500">
+                      Margem negativa — para margem positiva o preço mínimo é {brl.format(breakdown.break_even_price)}.
+                    </p>
+                  )}
+                </>
+              )}
             </>
-          ) : (
-            <p className="text-xs text-red-500 mt-1">
-              Margem inviável: máximo possível ≈ {(breakdown.max_margin * 100).toFixed(1)}%
-            </p>
           )}
         </div>
 
@@ -460,7 +495,7 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
           <Button type="button" variant="outline" onClick={onCancel} className="flex-1">
             Cancelar
           </Button>
-          <Button type="submit" disabled={saving} className="flex-1">
+          <Button type="submit" disabled={saving || breakdown.below_cost} className="flex-1">
             {saving ? "Salvando..." : "Salvar"}
           </Button>
         </div>
