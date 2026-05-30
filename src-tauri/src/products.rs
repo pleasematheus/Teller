@@ -26,6 +26,7 @@ pub struct Product {
     pub expected_loss_rate: f64,
     pub unit: String,
     pub profit_margin: f64,
+    pub loss_mode: String,
 }
 
 pub fn validate_product(name: &str, cost_price: f64, expected_loss_rate: f64) -> Result<(), String> {
@@ -37,6 +38,13 @@ pub fn validate_product(name: &str, cost_price: f64, expected_loss_rate: f64) ->
     }
     if !(0.0..1.0).contains(&expected_loss_rate) {
         return Err("Taxa de perda deve estar entre 0% e 99%".to_string());
+    }
+    Ok(())
+}
+
+pub fn validate_loss_mode(loss_mode: &str) -> Result<(), String> {
+    if loss_mode != "manual" && loss_mode != "auto" {
+        return Err("Modo de taxa de perda inválido".to_string());
     }
     Ok(())
 }
@@ -196,7 +204,7 @@ pub fn list_products(state: State<DbState>) -> Result<Vec<Product>, String> {
             SELECT id, name, description, active, sellable,
                    CAST(cost_price AS DOUBLE), CAST(markup AS DOUBLE),
                    CAST(final_price AS DOUBLE), CAST(expected_loss_rate AS DOUBLE),
-                   unit, CAST(profit_margin AS DOUBLE)
+                   unit, CAST(profit_margin AS DOUBLE), COALESCE(loss_mode, 'manual')
             FROM "Products"
             ORDER BY name
         "#)
@@ -216,6 +224,7 @@ pub fn list_products(state: State<DbState>) -> Result<Vec<Product>, String> {
                 expected_loss_rate: row.get(8)?,
                 unit: row.get(9)?,
                 profit_margin: row.get(10)?,
+                loss_mode: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -237,19 +246,21 @@ pub fn create_product(
     expected_loss_rate: f64,
     unit: String,
     profit_margin: f64,
+    loss_mode: String,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
     validate_product(&name, cost_price, expected_loss_rate)?;
+    validate_loss_mode(&loss_mode)?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
         r#"INSERT INTO "Products"
            (name, description, active, sellable, cost_price, markup, final_price,
-            expected_loss_rate, unit, profit_margin, updated_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            expected_loss_rate, unit, profit_margin, loss_mode, updated_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
         params![name, description, active, sellable, cost_price, markup, final_price,
-                expected_loss_rate, unit, profit_margin],
+                expected_loss_rate, unit, profit_margin, loss_mode],
     )
     .map_err(|e| e.to_string())?;
 
@@ -269,10 +280,12 @@ pub fn update_product(
     expected_loss_rate: f64,
     unit: String,
     profit_margin: f64,
+    loss_mode: String,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
     validate_product(&name, cost_price, expected_loss_rate)?;
+    validate_loss_mode(&loss_mode)?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
@@ -281,10 +294,10 @@ pub fn update_product(
             r#"UPDATE "Products"
                SET name = ?, description = ?, active = ?, sellable = ?,
                    cost_price = ?, markup = ?, final_price = ?, expected_loss_rate = ?,
-                   unit = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
+                   unit = ?, profit_margin = ?, loss_mode = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
             params![name, description, active, sellable, cost_price, markup, final_price,
-                    expected_loss_rate, unit, profit_margin, id],
+                    expected_loss_rate, unit, profit_margin, loss_mode, id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -328,6 +341,60 @@ mod tests {
     use super::*;
     use crate::db::test_db;
     use duckdb::params;
+
+    #[test]
+    fn validate_loss_mode_accepts_manual_and_auto() {
+        assert!(validate_loss_mode("manual").is_ok());
+        assert!(validate_loss_mode("auto").is_ok());
+    }
+
+    #[test]
+    fn validate_loss_mode_rejects_invalid() {
+        assert!(validate_loss_mode("").is_err());
+        assert!(validate_loss_mode("automatico").is_err());
+    }
+
+    #[test]
+    fn loss_mode_roundtrips_and_defaults_to_manual() {
+        let conn = test_db();
+        // loss_mode = 'auto' explícito persiste.
+        conn.execute(
+            r#"INSERT INTO "Products"
+               (name, active, sellable, markup, cost_price, final_price, expected_loss_rate,
+                profit_margin, loss_mode, updated_at, created_at)
+               VALUES ('Auto', true, true, 1.5, 10.0, 15.0, 0.0,
+                       0.0, 'auto', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        )
+        .unwrap();
+        // Sem loss_mode informado: assume o default 'manual' da coluna.
+        conn.execute(
+            r#"INSERT INTO "Products"
+               (name, active, sellable, markup, cost_price, final_price, expected_loss_rate,
+                profit_margin, updated_at, created_at)
+               VALUES ('Padrao', true, true, 1.5, 10.0, 15.0, 0.0,
+                       0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        )
+        .unwrap();
+
+        let auto_mode: String = conn
+            .query_row(
+                r#"SELECT loss_mode FROM "Products" WHERE name = 'Auto'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let default_mode: String = conn
+            .query_row(
+                r#"SELECT loss_mode FROM "Products" WHERE name = 'Padrao'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(auto_mode, "auto");
+        assert_eq!(default_mode, "manual");
+    }
 
     #[test]
     fn validate_product_rejects_empty_name() {

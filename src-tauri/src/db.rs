@@ -49,6 +49,15 @@ pub fn ensure_profit_margin_column(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+pub fn ensure_loss_mode_column(conn: &Connection) -> Result<(), String> {
+    // DuckDB does not support NOT NULL/CHECK in ADD COLUMN; new DBs get them via schema.sql.
+    conn.execute_batch(
+        r#"ALTER TABLE "Products" ADD COLUMN IF NOT EXISTS
+           "loss_mode" VARCHAR DEFAULT 'manual'"#,
+    )
+    .map_err(|e| e.to_string())
+}
+
 pub fn ensure_label_column(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"ALTER TABLE "Sales" ADD COLUMN IF NOT EXISTS
@@ -264,6 +273,7 @@ pub(crate) fn test_db() -> Connection {
     ensure_user_settings_table(&conn).unwrap();
     ensure_unit_column(&conn).unwrap();
     ensure_profit_margin_column(&conn).unwrap();
+    ensure_loss_mode_column(&conn).unwrap();
     ensure_label_column(&conn).unwrap();
     ensure_sales_products_cost_price(&conn).unwrap();
     ensure_financial_entries_expense_subtype(&conn).unwrap();

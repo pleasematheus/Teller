@@ -31,7 +31,7 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
   const [unit, setUnit] = useState(product?.unit ?? "unidade")
   const [costPrice, setCostPrice] = useState(product ? String(product.cost_price) : "")
   const [lossRatePct, setLossRatePct] = useState(product ? String(product.expected_loss_rate * 100) : "0")
-  const [lossMode, setLossMode] = useState<LossMode>("manual")
+  const [lossMode, setLossMode] = useState<LossMode>(product?.loss_mode ?? "manual")
   const [finalPrice, setFinalPrice] = useState(product ? String(product.final_price) : "")
   const [noMarginHistory, setNoMarginHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -182,6 +182,7 @@ export function ProductForm({ product, rates, onCancel, onSaved }: Props) {
       finalPrice: parsedFinalPrice,
       expectedLossRate: parsedLossRate,
       profitMargin: breakdown.profit_margin,
+      lossMode,
     }
 
     try {

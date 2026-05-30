@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS "Products" (
     "sellable"           BOOLEAN       NOT NULL DEFAULT TRUE,
     "unit"               VARCHAR       NOT NULL DEFAULT 'unidade' CHECK (unit IN ('unidade','rolo','bobina','ml','folha')),
     "profit_margin"      DOUBLE        NOT NULL DEFAULT 0,
+    "loss_mode"          VARCHAR       NOT NULL DEFAULT 'manual' CHECK (loss_mode IN ('manual','auto')),
     "updated_at"         TIMESTAMP     NOT NULL,
     "created_at"         TIMESTAMP     NOT NULL
 );
