@@ -34,11 +34,11 @@ O sistema SHALL permitir filtrar a lista de produtos por [Todos / Vendáveis / I
 
 ### Requirement: Cadastro de produto
 
-O sistema SHALL permitir criar um novo produto com nome, descrição opcional, flags `active` e `sellable`, taxa de perda, unidade de medida e **preço final de venda**. Para produto **sem componentes**, o operador informa o `cost_price`; para produto **com componentes** (ficha técnica), o `cost_price` é **derivado** dos insumos e não é editável. O sistema SHALL derivar `markup` e `profit_margin` a partir do preço final informado e do CMV aplicável, e persistir os três campos.
+O sistema SHALL permitir criar um novo produto com nome, descrição opcional, flags `active` e `sellable`, unidade de medida e **preço final de venda**. A **taxa de perda não é informada no cadastro**: um produto novo nasce com `expected_loss_rate = 0` e `loss_mode = manual`, valores fixados posteriormente pela compra do insumo (ver stock-management). Para produto **sem componentes**, o operador informa o `cost_price`; para produto **com componentes** (ficha técnica), o `cost_price` é **derivado** dos insumos e não é editável. O sistema SHALL derivar `markup` e `profit_margin` a partir do preço final informado e do CMV aplicável, e persistir os três campos.
 
 #### Scenario: Cadastro de produto sem componentes (custo próprio)
-- **WHEN** o usuário submete um produto sem componentes com nome não-vazio, `cost_price >= 0`, `expected_loss_rate` entre 0 e 1, `unit` válido e `final_price >= CMV` (CMV = `cost_price / (1 − expected_loss_rate)`)
-- **THEN** o sistema insere o produto com `markup` e `profit_margin` derivados do preço final, e retorna sucesso
+- **WHEN** o usuário submete um produto sem componentes com nome não-vazio, `cost_price >= 0`, `unit` válido e `final_price >= CMV` (CMV = `cost_price / (1 − expected_loss_rate)`, com `expected_loss_rate = 0` em produto novo)
+- **THEN** o sistema insere o produto com `expected_loss_rate = 0`, `loss_mode = manual`, e `markup`/`profit_margin` derivados do preço final, e retorna sucesso
 
 #### Scenario: Cadastro de produto com componentes (custo derivado)
 - **WHEN** o usuário submete um produto com componentes cadastrados
@@ -48,9 +48,9 @@ O sistema SHALL permitir criar um novo produto com nome, descrição opcional, f
 - **WHEN** o usuário submete nome em branco
 - **THEN** o sistema retorna erro de validação sem criar o registro
 
-#### Scenario: Taxa de perda inválida
-- **WHEN** o usuário submete `expected_loss_rate` fora do intervalo 0–1
-- **THEN** o sistema retorna erro de validação sem criar o registro
+#### Scenario: Taxa de perda não é entrada do cadastro
+- **WHEN** o formulário de cadastro de produto é renderizado
+- **THEN** não há campo editável de taxa de perda; o produto é criado com `expected_loss_rate = 0` e a perda passa a ser fixada na primeira compra do insumo (ver stock-management)
 
 ### Requirement: CMV derivado da ficha técnica
 
@@ -74,11 +74,15 @@ O sistema SHALL derivar o CMV de um produto vendável **com componentes** a part
 
 ### Requirement: Edição de produto
 
-O sistema SHALL permitir atualizar os dados de um produto existente incluindo `unit` e `final_price`, recalculando `markup` e `profit_margin` derivados do preço final ao salvar.
+O sistema SHALL permitir atualizar os dados de um produto existente incluindo `unit` e `final_price`, recalculando `markup` e `profit_margin` derivados do preço final ao salvar. A edição **NÃO altera** `expected_loss_rate` nem `loss_mode`: esses campos são propriedade do evento de compra (ver stock-management) e aparecem no formulário apenas em leitura.
 
 #### Scenario: Edição com dados válidos
 - **WHEN** o usuário edita um produto existente e submete dados válidos incluindo `unit` e `final_price >= CMV`
 - **THEN** o sistema atualiza o registro em `Products` com os novos valores, recalcula `markup` e `profit_margin` derivados do `final_price`, e atualiza `updated_at`
+
+#### Scenario: Edição não altera a perda fixada
+- **WHEN** o usuário salva uma edição de produto
+- **THEN** `expected_loss_rate` e `loss_mode` permanecem com o valor fixado pela última compra do insumo, sem serem sobrescritos pelo salvamento do produto
 
 #### Scenario: Preço abaixo do custo na edição
 - **WHEN** o usuário submete `final_price < CMV`
@@ -110,7 +114,7 @@ O sistema SHALL embutir a taxa de cartão no preço dos produtos como custo vari
 
 ### Requirement: Precificação automática no formulário
 
-O sistema SHALL permitir que o operador informe o **preço final** e SHALL calcular e exibir em tempo real o CMV e a **Margem de lucro derivada** conforme o usuário edita `cost_price`, `expected_loss_rate` e `final_price`, usando as taxas de `get_pricing_rates` (cujo `cv` já inclui a taxa de cartão embutida). O sistema NÃO SHALL exibir a porcentagem de markup no formulário (o `markup` continua sendo derivado e persistido, apenas não é mostrado). O preço de venda não SHALL ser recalculado automaticamente a partir do histórico da empresa.
+O sistema SHALL permitir que o operador informe o **preço final** e SHALL calcular e exibir em tempo real o CMV e a **Margem de lucro derivada** conforme o usuário edita `cost_price` e `final_price`, usando a `expected_loss_rate` **persistida** (somente leitura) e as taxas de `get_pricing_rates` (cujo `cv` já inclui a taxa de cartão embutida). O sistema NÃO SHALL exibir a porcentagem de markup no formulário (o `markup` continua sendo derivado e persistido, apenas não é mostrado). O preço de venda não SHALL ser recalculado automaticamente a partir do histórico da empresa.
 
 #### Scenario: Cálculo com histórico de vendas disponível
 - **WHEN** o formulário é aberto para um novo produto e existem vendas nos últimos 12 meses
@@ -121,20 +125,28 @@ O sistema SHALL permitir que o operador informe o **preço final** e SHALL calcu
 - **THEN** CV% = 0, DF% = 0 e o preço sugerido recai sobre o preço de equilíbrio (margem zero); o formulário exibe aviso de que as taxas não puderam ser calculadas
 
 #### Scenario: Atualização em tempo real
-- **WHEN** o usuário altera `cost_price`, `expected_loss_rate` ou `final_price`
-- **THEN** o CMV e a Margem de lucro derivada são recalculados instantaneamente no cliente sem nova requisição, mantendo o `final_price` informado pelo operador como entrada estável
+- **WHEN** o usuário altera `cost_price` ou `final_price`
+- **THEN** o CMV e a Margem de lucro derivada são recalculados instantaneamente no cliente sem nova requisição, usando a `expected_loss_rate` persistida e mantendo o `final_price` informado pelo operador como entrada estável
 
 #### Scenario: Markup não exibido no formulário
 - **WHEN** o formulário de produto é renderizado em qualquer estado
 - **THEN** a porcentagem de markup não é exibida; apenas o custo, o CMV e a margem derivada aparecem como leitura
 
+#### Scenario: Taxa de perda exibida somente leitura
+- **WHEN** o formulário de um produto sem componentes é renderizado
+- **THEN** a taxa de perda é exibida como leitura (valor de `expected_loss_rate`) com o rótulo do modo (`auto`/`manual`), sem campo editável
+
 ### Requirement: Cálculo automático de taxa de perda
 
-O sistema SHALL calcular `expected_loss_rate` de um insumo a partir do histórico de `Stock_Movements` sobre **unidades resolvidas** (saídas por venda ou perda) numa janela de 12 meses, descartando unidades ainda em estoque. O cálculo SHALL servir como **sugestão fixada no evento de compra** (ver stock-management), não mais por ação "Calcular" no formulário de produto. O sistema NÃO recalcula `expected_loss_rate` automaticamente na leitura ou exibição.
+O sistema SHALL calcular `expected_loss_rate` de um insumo a partir do histórico de `Stock_Movements` sobre **unidades resolvidas** (saídas por venda ou perda) numa janela de 12 meses, descartando unidades ainda em estoque. A medição SHALL considerar o **motivo-base** do movimento, ignorando qualquer observação anexada ao motivo (ex.: `"perda - Impressão com defeito"` conta como `perda`). O cálculo SHALL servir como **sugestão fixada no evento de compra** (ver stock-management), não mais por ação "Calcular" no formulário de produto. O sistema NÃO recalcula `expected_loss_rate` automaticamente na leitura ou exibição.
 
 #### Scenario: Cálculo com histórico resolvido disponível
 - **WHEN** `get_product_loss_rate` é invocado para um insumo com saídas nos últimos 12 meses
-- **THEN** o sistema retorna `Σ(quantity WHERE movement_type='out' AND motive='perda') / (Σ(quantity WHERE movement_type='out' AND motive='venda') + Σ(quantity WHERE movement_type='out' AND motive='perda'))`, considerando apenas movimentos com `created_at >= NOW() - INTERVAL 12 MONTHS`
+- **THEN** o sistema retorna `Σ(quantity de saídas cujo motivo-base é 'perda') / (Σ(quantity de saídas cujo motivo-base é 'venda') + Σ(quantity de saídas cujo motivo-base é 'perda'))`, considerando apenas movimentos com `created_at >= NOW() - INTERVAL 12 MONTHS`
+
+#### Scenario: Perda registrada com observação é contabilizada
+- **WHEN** uma perda é registrada com observação e gravada como `motive = "perda - <observação>"`
+- **THEN** a medição a contabiliza como perda (pelo motivo-base), sem ser ignorada por causa da observação
 
 #### Scenario: Estoque parado não dilui a taxa
 - **WHEN** um insumo tem entradas (`in`) ainda não resolvidas em estoque
@@ -150,27 +162,27 @@ O sistema SHALL calcular `expected_loss_rate` de um insumo a partir do históric
 
 ### Requirement: Persistência do modo da taxa de perda
 
-O sistema SHALL persistir o modo da taxa de perda (`loss_mode`, com valores `manual` ou `auto`) por produto, com default `manual`, e restaurar o modo selecionado ao reabrir o produto para edição. O modo é uma preferência salva: alterar o modo não recalcula nem altera `expected_loss_rate`; o valor só muda por entrada manual ou ao acionar "Calcular". Tanto o modo quanto o valor permanecem inalterados até a próxima edição salva.
+O sistema SHALL persistir o modo da taxa de perda (`loss_mode`, com valores `manual` ou `auto`) por produto, com default `manual`. O modo é **definido no evento de compra** (ver stock-management), não no formulário de produto, e é **restaurado em modo somente leitura** ao abrir o produto para edição. Salvar o produto não altera `loss_mode` nem `expected_loss_rate`.
 
-#### Scenario: Persistir modo ao salvar
-- **WHEN** o usuário salva um produto com `loss_mode = auto`
+#### Scenario: Modo definido na compra
+- **WHEN** uma compra fixa a perda de um insumo com o modo `auto` selecionado no item
 - **THEN** o sistema grava `loss_mode = auto` no registro do produto
 
-#### Scenario: Restaurar modo na edição
-- **WHEN** o usuário reabre para edição um produto salvo com `loss_mode = auto`
-- **THEN** o formulário exibe o modo `auto` selecionado, sem reiniciar para `manual`
+#### Scenario: Restaurar modo somente leitura na edição
+- **WHEN** o usuário abre para edição um produto salvo com `loss_mode = auto`
+- **THEN** o formulário exibe o modo `auto` em leitura ao lado da taxa de perda, sem controle de edição
 
 #### Scenario: Default manual
 - **WHEN** um produto é criado sem `loss_mode` informado ou é lido de um registro legado sem o campo
 - **THEN** o sistema assume `loss_mode = manual`
 
 #### Scenario: Modo inválido rejeitado
-- **WHEN** o usuário submete um `loss_mode` diferente de `manual` ou `auto`
+- **WHEN** o comando de compra recebe um `loss_mode` diferente de `manual` ou `auto`
 - **THEN** o sistema rejeita com erro de validação
 
-#### Scenario: Alterar modo não altera o valor
-- **WHEN** o usuário troca `loss_mode` entre `manual` e `auto` sem acionar "Calcular" nem digitar
-- **THEN** `expected_loss_rate` permanece com o valor atual, sem recálculo
+#### Scenario: Salvar produto não altera o modo
+- **WHEN** o usuário salva uma edição de produto
+- **THEN** `loss_mode` permanece com o valor fixado pela última compra, sem recálculo nem sobrescrita
 
 ### Requirement: Margem de lucro por produto
 
@@ -214,15 +226,15 @@ O sistema SHALL derivar a margem de lucro do preço final via `computeMarginFrom
 
 ### Requirement: Validação dinâmica do campo de preço final
 
-O sistema SHALL restringir dinamicamente o valor mínimo aceito no campo de preço final do formulário de produto ao CMV atual (`cost_price / (1 − expected_loss_rate)`), recalculado conforme `cost_price` e `expected_loss_rate` mudam.
+O sistema SHALL restringir dinamicamente o valor mínimo aceito no campo de preço final do formulário de produto ao CMV atual (`cost_price / (1 − expected_loss_rate)`), recalculado conforme `cost_price` muda. A `expected_loss_rate` é constante no formulário (valor persistido, somente leitura), então o mínimo varia apenas com o custo.
 
 #### Scenario: Mínimo do campo derivado do CMV atual
 - **WHEN** o formulário de produto é renderizado com `cost_price` e `expected_loss_rate`
 - **THEN** o atributo de valor mínimo do campo de preço final corresponde ao CMV calculado
 
-#### Scenario: Mínimo acompanha mudança de custo ou perda
-- **WHEN** o usuário altera `cost_price` ou `expected_loss_rate`
-- **THEN** o valor mínimo do campo de preço final é recalculado para refletir o novo CMV
+#### Scenario: Mínimo acompanha mudança de custo
+- **WHEN** o usuário altera `cost_price`
+- **THEN** o valor mínimo do campo de preço final é recalculado para refletir o novo CMV, mantendo a `expected_loss_rate` persistida
 
 ### Requirement: Cálculo de margem realizada
 

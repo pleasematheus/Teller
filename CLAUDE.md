@@ -6,7 +6,7 @@
 - Pule arquivos acima de 100KB salvo se necessário.
 - Sem aberturas bajuladoras nem fluff de fechamento.
 - Sem emojis ou em-dashes.
-- Não adivinhe APIs, versões, flags, SHAs ou nomes de pacotes. Verifique lendo código ou docs antes de afirmar.
+- Não adivinhe APIs, versões, flags, SHAs ou nomes de pacotes. Verifique lendo código ou docs antes de afirmar, caso nada funcionar pergunte.
 
 ## Proibido
 - Nunca reescreva um arquivo inteiro para alterar uma função; edite apenas o trecho necessário.
