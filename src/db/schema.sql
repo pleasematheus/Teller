@@ -234,3 +234,8 @@ CREATE TABLE IF NOT EXISTS "User_Settings" (
     PRIMARY KEY ("user_id", "key"),
     FOREIGN KEY ("user_id") REFERENCES "Users" ("id")
 );
+
+CREATE TABLE IF NOT EXISTS "App_Meta" (
+    "key"   TEXT NOT NULL PRIMARY KEY,
+    "value" TEXT NOT NULL
+);

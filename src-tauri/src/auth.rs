@@ -57,12 +57,6 @@ pub fn lookup_user(conn: &duckdb::Connection, identifier: &str) -> Result<Option
 pub fn check_setup(state: State<DbState>) -> Result<bool, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     crate::db::init_schema(&conn)?;
-    crate::db::ensure_user_settings_table(&conn)?;
-    crate::db::ensure_unit_column(&conn)?;
-    crate::db::ensure_profit_margin_column(&conn)?;
-    crate::db::ensure_label_column(&conn)?;
-    crate::db::ensure_business_settings_nullable(&conn)?;
-    crate::db::ensure_business_settings_double_type(&conn)?;
     let count: i64 = conn
         .query_row(
             r#"SELECT COUNT(*) FROM "Users" WHERE active = true"#,

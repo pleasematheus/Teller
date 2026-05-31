@@ -28,6 +28,7 @@
 - Teste comportamento, não implementação.
 - Use os blocos #### Scenario: dos specs OpenSpec como referência de casos de teste.
 - Testes manuais devem ser incluídos como tasks e delegados a testers humanos, não automatizados.
+- Alterações no banco de dados DuckDB devem contem tasks para exclusão da versão antiga e criação da nova versão
 
 ## Stack
 - Frontend: React 19, TypeScript, Tailwind 4, shadcn/ui, Vitest
