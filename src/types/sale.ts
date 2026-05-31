@@ -26,6 +26,12 @@ export interface SalePaymentInput {
   installments: number
 }
 
+export interface SaleCloseInput {
+  id: number
+  items: SaleItemInput[]
+  payments: SalePaymentInput[]
+}
+
 export interface TransactionFee {
   id: number
   payment_method_id: number

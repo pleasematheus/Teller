@@ -160,7 +160,6 @@ export function SalesModule() {
             key={activeSaleFormKey}
             sale={formContent.kind === "view-sale" ? formContent.sale : null}
             products={products}
-            rates={rates}
             onCancel={closeForm}
             onSaved={() => { loadSales(); closeForm() }}
           />
@@ -172,6 +171,8 @@ export function SalesModule() {
           <SaleCloseForm
             key={formContent.sale.id}
             sale={formContent.sale}
+            products={products}
+            rates={rates}
             onCancel={closeForm}
             onSaved={loadSales}
           />
