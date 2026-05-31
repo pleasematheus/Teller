@@ -495,6 +495,42 @@ pub fn close_sale(
     }
 }
 
+#[derive(Serialize)]
+pub struct SalePaymentRow {
+    pub payment_method_name: String,
+    pub amount_paid: f64,
+    pub net_amount: f64,
+}
+
+#[tauri::command]
+pub fn get_sale_payments(sale_id: i64, state: State<DbState>) -> Result<Vec<SalePaymentRow>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(r#"
+            SELECT pm.name, sp.amount_paid, sp.net_amount
+            FROM "Sale_Payments" sp
+            JOIN "Payment_Methods" pm ON pm.id = sp.payment_method_id
+            WHERE sp.sale_id = ?
+            ORDER BY sp.created_at
+        "#)
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![sale_id], |row| {
+            Ok(SalePaymentRow {
+                payment_method_name: row.get(0)?,
+                amount_paid: row.get(1)?,
+                net_amount: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(rows)
+}
+
 #[tauri::command]
 pub fn get_sale_items(sale_id: i64, state: State<DbState>) -> Result<Vec<SaleItemRow>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
@@ -1119,5 +1155,76 @@ mod tests {
         let result2 = do_close_sale_work(&conn, sale2, &items2, &pay_discounted);
         conn.execute_batch("COMMIT").unwrap();
         assert!(result2.is_ok(), "Pagar 18.0 quando total descontado é 18.0 deve ter sucesso");
+    }
+
+    #[test]
+    fn get_sale_payments_returns_method_name_and_amounts() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let product_id = insert_product(&conn, "Foto", true);
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 30.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 30.0, 0.0, 30.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let items = vec![SaleItemInput { product_id, quantity: 1, discount: 0.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let rows: Vec<(String, f64, f64)> = {
+            let mut stmt = conn.prepare(
+                r#"SELECT pm.name, sp.amount_paid, sp.net_amount
+                   FROM "Sale_Payments" sp
+                   JOIN "Payment_Methods" pm ON pm.id = sp.payment_method_id
+                   WHERE sp.sale_id = ? ORDER BY sp.created_at"#,
+            ).unwrap();
+            stmt.query_map(params![sale_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "Dinheiro");
+        assert!((rows[0].1 - 30.0).abs() < 1e-6, "amount_paid deve ser 30.0");
+        assert!((rows[0].2 - 30.0).abs() < 1e-6, "net_amount sem taxa deve ser 30.0");
+    }
+
+    #[test]
+    fn get_sale_payments_returns_empty_for_open_sale() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let product_id = insert_product(&conn, "Foto", true);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let count: i64 = conn.query_row(
+            r#"SELECT COUNT(*) FROM "Sale_Payments" WHERE sale_id = ?"#,
+            params![sale_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0, "Pedido em aberto não deve ter pagamentos");
     }
 }

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { SalesList } from "./SalesList"
 import { SaleForm } from "./SaleForm"
 import { SaleCloseForm } from "./SaleCloseForm"
+import { SaleDetail } from "./SaleDetail"
 import type { Sale } from "@/types/sale"
 import type { Product, PricingRates } from "@/types/product"
 
@@ -18,6 +19,7 @@ type FormContent =
   | { kind: "new-sale" }
   | { kind: "view-sale"; sale: Sale }
   | { kind: "close-sale"; sale: Sale }
+  | { kind: "detail-sale"; sale: Sale }
 
 type SalesActiveView = "open" | "history" | "form"
 
@@ -32,6 +34,7 @@ const tabClass = (active: boolean) =>
 function formLabel(content: FormContent): string {
   if (content.kind === "new-sale") return "Novo pedido"
   if (content.kind === "view-sale") return `Pedido #${content.sale.id}`
+  if (content.kind === "detail-sale") return `Pedido #${content.sale.id}`
   return `Fechar #${content.sale.id}`
 }
 
@@ -78,6 +81,15 @@ export function SalesModule() {
       return
     }
     setFormContent({ kind: "view-sale", sale })
+    setActiveView("form")
+  }
+
+  const openDetail = (sale: Sale) => {
+    if (formContent?.kind === "detail-sale" && formContent.sale.id === sale.id) {
+      setActiveView("form")
+      return
+    }
+    setFormContent({ kind: "detail-sale", sale })
     setActiveView("form")
   }
 
@@ -149,7 +161,7 @@ export function SalesModule() {
         <SalesList
           sales={closedSales}
           mode="history"
-          onView={() => {}}
+          onView={openDetail}
           onClose={() => {}}
         />
       </div>
@@ -175,6 +187,15 @@ export function SalesModule() {
             rates={rates}
             onCancel={closeForm}
             onSaved={loadSales}
+          />
+        </div>
+      )}
+
+      {formContent?.kind === "detail-sale" && (
+        <div className={activeView === "form" ? "flex flex-1 flex-col" : "hidden"}>
+          <SaleDetail
+            key={formContent.sale.id}
+            sale={formContent.sale}
           />
         </div>
       )}

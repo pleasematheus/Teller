@@ -44,9 +44,12 @@ export function SalesList({ sales, mode, onView, onClose, onNew }: Props) {
                   <Button size="sm" onClick={() => onClose(sale)}>Fechar</Button>
                 </div>
               ) : (
-                <span className="text-xs text-teller-muted shrink-0">
-                  {dtf.format(new Date(sale.created_at))}
-                </span>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-xs text-teller-muted">
+                    {dtf.format(new Date(sale.created_at))}
+                  </span>
+                  <Button size="sm" variant="outline" onClick={() => onView(sale)}>Ver</Button>
+                </div>
               )}
             </div>
           ))}
