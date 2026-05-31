@@ -40,6 +40,12 @@ export interface TransactionFee {
   fixed_fee: number
 }
 
+export interface SalePaymentRow {
+  payment_method_name: string
+  amount_paid: number
+  net_amount: number
+}
+
 export interface PaymentMethod {
   id: number
   name: string

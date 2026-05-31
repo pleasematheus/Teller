@@ -63,6 +63,7 @@ pub fn run() {
             sales::update_sale,
             sales::close_sale,
             sales::get_sale_items,
+            sales::get_sale_payments,
             settings::list_payment_methods,
             financials::list_financial_entries,
             financials::list_recurring_suggestions,
