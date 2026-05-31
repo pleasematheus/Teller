@@ -78,4 +78,16 @@ describe("dreToSankey", () => {
     const nodeNames = result!.nodes.map((n) => n.name);
     expect(nodeNames).toContain("Lucro Líquido");
   });
+
+  it("calcula o valor agregado de cada nó", () => {
+    const result = dreToSankey(baseDre);
+    expect(result).not.toBeNull();
+    const valueByName = Object.fromEntries(
+      result!.nodes.map((n) => [n.name, n.value])
+    );
+    expect(valueByName["Receita Bruta"]).toBe(1000);
+    expect(valueByName["Receita Líquida"]).toBe(900);
+    expect(valueByName["Lucro Bruto"]).toBe(700);
+    expect(valueByName["Lucro Líquido"]).toBe(400);
+  });
 });

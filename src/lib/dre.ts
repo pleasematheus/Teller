@@ -9,7 +9,7 @@ const SUBTYPE_LABELS: Record<string, string> = {
 };
 
 function node(name: string): SankeyNode {
-  return { name };
+  return { name, value: 0 };
 }
 
 function link(source: string, target: string, value: number): SankeyLink {
@@ -55,10 +55,6 @@ export function dreToSankey(dre: DreResult): SankeyData | null {
   const N_LUCRO_OPERACIONAL = "Lucro Operacional";
   const N_EBIT = "EBIT";
   const N_LUCRO_LIQUIDO = "Lucro Líquido";
-
-  // Fontes de receita: vendas vs. outras receitas
-  const vendas_items = line_items.filter((i) => i.subtype === "income_vendas");
-  const outras_receitas = line_items.filter((i) => i.subtype === "income_outras");
 
   // Como line_items vêm do backend apenas para despesas, calculamos as fontes a partir dos totais
   const deducoes = receita_bruta - receita_liquida;
@@ -146,5 +142,19 @@ export function dreToSankey(dre: DreResult): SankeyData | null {
   }
   const validNodes = nodes.filter((n) => usedNodes.has(n.name));
 
-  return { nodes: validNodes, links: validLinks };
+  // Valor agregado por nó: para a Receita Bruta (fonte) usa-se a soma dos
+  // fluxos de saída; para os demais, a soma dos fluxos de entrada.
+  const nodeValue = (name: string): number => {
+    const incoming = validLinks
+      .filter((l) => l.target === name)
+      .reduce((sum, l) => sum + l.value, 0);
+    const outgoing = validLinks
+      .filter((l) => l.source === name)
+      .reduce((sum, l) => sum + l.value, 0);
+    return Math.max(incoming, outgoing);
+  };
+
+  const valuedNodes = validNodes.map((n) => ({ ...n, value: nodeValue(n.name) }));
+
+  return { nodes: valuedNodes, links: validLinks };
 }
