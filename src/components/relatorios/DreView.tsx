@@ -7,12 +7,8 @@ import type { DateRange } from "react-day-picker";
 import { DateRangePicker } from "./DateRangePicker";
 import { SankeyChart } from "./SankeyChart";
 import { dreToSankey } from "@/lib/dre";
+import { formatBRL } from "@/lib/format";
 import type { DreResult } from "@/types/relatorios";
-
-const brl = new Intl.NumberFormat("pt-BR", {
-  style: "currency",
-  currency: "BRL",
-});
 
 function pct(value: number, base: number): string {
   if (base === 0) return "—";
@@ -153,7 +149,7 @@ export function DreView({ onBack }: Props) {
                             isNeg ? "text-red-500" : "text-teller-text"
                           }`}
                         >
-                          {brl.format(value)}
+                          {formatBRL(value)}
                         </td>
                         <td
                           className={`px-4 py-3 text-right tabular-nums ${

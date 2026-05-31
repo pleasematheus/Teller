@@ -49,6 +49,8 @@ O sistema SHALL exibir um Sankey Chart (ECharts) mostrando o fluxo de receita at
 - **Intermediários**: "Receita Bruta", "Receita Líquida", "Lucro Bruto", "Lucro Operacional", "EBIT"
 - **Folhas (sinks)**: "Deduções", "CMV", cada categoria de `despesa`/`custo` agrupada por `category`, "Juros", "Impostos", "Lucro Líquido"
 
+Todos os valores monetários exibidos no gráfico (tooltip dos fluxos e rótulos dos nós) SHALL ser formatados em Real brasileiro (localidade `pt-BR`, moeda `BRL`), de forma consistente com a tabela do DRE.
+
 #### Scenario: Sankey exibido com resultado positivo
 - **WHEN** todos os indicadores intermediários (Receita Líquida, Lucro Bruto, Lucro Operacional, EBIT) são maiores que zero
 - **THEN** o Sankey é renderizado mostrando o fluxo completo da Receita Bruta até o Lucro Líquido
@@ -60,6 +62,14 @@ O sistema SHALL exibir um Sankey Chart (ECharts) mostrando o fluxo de receita at
 #### Scenario: Categorias de despesa como nós individuais
 - **WHEN** existem múltiplas categorias distintas de `despesa` ou `custo`
 - **THEN** cada categoria aparece como um nó folha separado no Sankey com o valor agregado
+
+#### Scenario: Tooltip do fluxo exibe valor em R$
+- **WHEN** o usuário passa o mouse sobre um fluxo (link) ou nó do Sankey
+- **THEN** o valor é exibido formatado como moeda em Real (ex.: `R$ 1.000,00`) e não como número cru (ex.: `1000`)
+
+#### Scenario: Rótulo do nó exibe nome e valor em R$
+- **WHEN** o Sankey é renderizado
+- **THEN** cada nó exibe seu nome acompanhado do valor agregado formatado em R$
 
 ### Requirement: Snapshot de CMV capturado ao fechar venda
 O sistema SHALL gravar o `cost_price` atual do produto em `Sales_Products.cost_price` no momento em que uma venda é fechada via `close_sale`. Este valor SHALL ser imutável após o fechamento.

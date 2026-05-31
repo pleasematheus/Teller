@@ -15,7 +15,7 @@ export type DreResult = {
   line_items: DreLineItem[];
 };
 
-export type SankeyNode = { name: string };
+export type SankeyNode = { name: string; value: number };
 
 export type SankeyLink = {
   source: string;
