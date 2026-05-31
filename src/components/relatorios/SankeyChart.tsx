@@ -80,5 +80,5 @@ export function SankeyChart({ data }: Props) {
     );
   }
 
-  return <div ref={containerRef} className="h-80 w-full" />;
+  return <div ref={containerRef} className="h-full w-full" />;
 }
