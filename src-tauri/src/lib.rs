@@ -10,13 +10,7 @@ pub mod sales;
 pub mod settings;
 pub mod stock;
 
-pub use db::{DbState, ensure_financial_entries_expense_subtype, ensure_label_column,
-             ensure_loss_mode_column, ensure_profit_margin_column,
-             ensure_purchase_items_loss_rate,
-             ensure_sale_payments_fee_snapshot, ensure_sales_products_cost_price,
-             ensure_transaction_fees_installments, ensure_unit_column,
-             ensure_user_settings_table, init_schema,
-             normalize_transaction_fee_installments, open_database};
+pub use db::{DbState, init_schema, open_database};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -37,17 +31,6 @@ pub fn run() {
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
             let io_err = |e: String| std::io::Error::new(std::io::ErrorKind::Other, e);
             init_schema(&conn).map_err(&io_err)?;
-            ensure_user_settings_table(&conn).map_err(&io_err)?;
-            ensure_unit_column(&conn).map_err(&io_err)?;
-            ensure_profit_margin_column(&conn).map_err(&io_err)?;
-            ensure_loss_mode_column(&conn).map_err(&io_err)?;
-            ensure_label_column(&conn).map_err(&io_err)?;
-            ensure_sales_products_cost_price(&conn).map_err(&io_err)?;
-            ensure_financial_entries_expense_subtype(&conn).map_err(&io_err)?;
-            ensure_transaction_fees_installments(&conn).map_err(&io_err)?;
-            ensure_sale_payments_fee_snapshot(&conn).map_err(&io_err)?;
-            ensure_purchase_items_loss_rate(&conn).map_err(&io_err)?;
-            normalize_transaction_fee_installments(&conn).map_err(&io_err)?;
             app.manage(DbState(Mutex::new(conn)));
             Ok(())
         })
