@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { computePrice, computeMaxDiscount, applyGlobalDiscount, computeMarginFromPrice, computeCmvFromComponents } from "./pricing"
+import { computePrice, computeMaxDiscount, applyGlobalDiscount, computeMarginFromPrice, computeCmvFromComponents, itemDiscountFraction } from "./pricing"
 import type { PricingRates } from "@/types/product"
 
 const zeroRates: PricingRates = {
@@ -213,6 +213,28 @@ describe("computeCmvFromComponents", () => {
   it("componente com perda >= 1 retorna null", () => {
     const components = [{ cost_price: 10, expected_loss_rate: 1.5, quantity: 1 }]
     expect(computeCmvFromComponents(components)).toBeNull()
+  })
+})
+
+describe("itemDiscountFraction", () => {
+  it("valor menor que o total retorna fração correta", () => {
+    expect(itemDiscountFraction(20, 200)).toBeCloseTo(0.1)
+  })
+
+  it("valor maior que o total clampeia em 1", () => {
+    expect(itemDiscountFraction(300, 200)).toBe(1)
+  })
+
+  it("valor zero retorna 0", () => {
+    expect(itemDiscountFraction(0, 200)).toBe(0)
+  })
+
+  it("valor negativo retorna 0", () => {
+    expect(itemDiscountFraction(-10, 200)).toBe(0)
+  })
+
+  it("lineTotal zero retorna 0 (sem divisão por zero)", () => {
+    expect(itemDiscountFraction(50, 0)).toBe(0)
   })
 })
 

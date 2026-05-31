@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { computeMaxDiscount, applyGlobalDiscount } from "@/lib/pricing"
+import { computeMaxDiscount, applyGlobalDiscount, itemDiscountFraction } from "@/lib/pricing"
 import type { Product, PricingRates } from "@/types/product"
 import type { Sale, SaleItem, SaleItemInput, PaymentMethod, SalePaymentInput } from "@/types/sale"
 
@@ -43,6 +43,7 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
   const [payments, setPayments] = useState<PaymentLine[]>([{ methodId: 0, installments: 1, amount: "" }])
   const [globalDiscount, setGlobalDiscount] = useState("")
   const [globalMode, setGlobalMode] = useState<GlobalMode>("R$")
+  const [itemModes, setItemModes] = useState<Record<number, GlobalMode>>({})
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
@@ -83,11 +84,21 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
 
   const updateItemDiscount = (idx: number, raw: string) => {
     const value = parseFloat(raw) || 0
+    const mode = itemModes[idx] ?? "%"
     setCartItems((prev) =>
-      prev.map((item, i) =>
-        i === idx ? { ...item, discount: Math.min(1, Math.max(0, value / 100)) } : item,
-      ),
+      prev.map((item, i) => {
+        if (i !== idx) return item
+        const fraction =
+          mode === "%"
+            ? Math.min(1, Math.max(0, value / 100))
+            : itemDiscountFraction(value, item.final_price * item.quantity)
+        return { ...item, discount: fraction }
+      }),
     )
+  }
+
+  const setItemMode = (idx: number, mode: GlobalMode) => {
+    setItemModes((prev) => ({ ...prev, [idx]: mode }))
   }
 
   const handleGlobalDiscountChange = (raw: string) => {
@@ -203,6 +214,13 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
               const belowFloor = item.discount > 0 && discountedPrice < floorPrice - 0.001
               const showMaxHint = focusedIdx === idx || item.discount > 0
 
+              const itemMode = itemModes[idx] ?? "%"
+              const inputValue = item.discount > 0
+                ? itemMode === "%"
+                  ? (item.discount * 100).toFixed(2)
+                  : (item.discount * item.final_price * item.quantity).toFixed(2)
+                : ""
+
               return (
                 <div key={idx} className="rounded-lg border border-teller-border bg-teller-card p-3 flex flex-col gap-2">
                   <div className="flex items-center justify-between">
@@ -211,21 +229,40 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
                   </div>
                   <div className="flex gap-2 items-end">
                     <div className="flex flex-col gap-1 flex-1">
-                      <span className="text-xs text-teller-muted">
-                        Desconto (%)
-                        {showMaxHint && (
-                          <span className={`ml-1 ${belowFloor ? "text-red-500" : "text-teller-muted"}`}>
-                            · máx. {brl.format(maxDiscountValue)} ({pct.format(maxDiscountPct)})
-                          </span>
-                        )}
-                      </span>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs text-teller-muted">
+                          Desconto ({itemMode})
+                          {showMaxHint && (
+                            <span className={`ml-1 ${belowFloor ? "text-red-500" : "text-teller-muted"}`}>
+                              · máx. {itemMode === "R$" ? <strong>{brl.format(maxDiscountValue)}</strong> : brl.format(maxDiscountValue)} ({itemMode === "%" ? <strong>{pct.format(maxDiscountPct)}</strong> : pct.format(maxDiscountPct)})
+                            </span>
+                          )}
+                        </span>
+                        <div className="flex gap-0.5 rounded border border-teller-border p-0.5 text-xs shrink-0">
+                          {(["R$", "%"] as GlobalMode[]).map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => setItemMode(idx, m)}
+                              className={[
+                                "px-1.5 py-0.5 rounded transition-colors",
+                                itemMode === m
+                                  ? "bg-teller-accent text-white"
+                                  : "text-teller-muted hover:text-teller-text",
+                              ].join(" ")}
+                            >
+                              {m}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <Input
                         type="number"
                         min={0}
-                        max={100}
+                        max={itemMode === "%" ? 100 : undefined}
                         step="0.01"
-                        value={item.discount > 0 ? (item.discount * 100).toFixed(2) : ""}
-                        placeholder="0"
+                        value={inputValue}
+                        placeholder={itemMode === "R$" ? "0,00" : "0"}
                         onFocus={() => setFocusedIdx(idx)}
                         onBlur={() => setFocusedIdx(null)}
                         onChange={(e) => updateItemDiscount(idx, e.target.value)}
