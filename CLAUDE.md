@@ -1,41 +1,36 @@
-# Teller: Diretrizes do Projeto
+ # Teller: Project Guidelines
 
 ## Approach
-- Leia arquivos antes de escrever. Não releia sem que tenham mudado.
-- Raciocínio minucioso, output conciso.
-- Pule arquivos acima de 100KB salvo se necessário.
-- Sem aberturas bajuladoras nem fluff de fechamento.
-- Sem emojis ou em-dashes.
-- Não adivinhe APIs, versões, flags, SHAs ou nomes de pacotes. Verifique lendo código ou docs antes de afirmar, caso nada funcionar pergunte.
+- Read files before writing. Do not re-read unless they have changed.
+- Thorough reasoning, concise output.
+- Skip files above 100KB unless necessary.
+- No sycophantic openings or closing fluff.
+- No emojis or em-dashes.
+- Do not guess APIs, versions, flags, SHAs, or package names. Verify by reading code or docs before stating; if nothing works, ask.
 
-## Proibido
-- Nunca reescreva um arquivo inteiro para alterar uma função; edite apenas o trecho necessário.
-- Nunca adicione dependências sem perguntar primeiro.
-- Nunca crie testes sem antes ler o arquivo a ser testado.
-- Nunca leia o catálogo completo de RTK (docs/rtk.md) sem necessidade explícita.
+## Forbidden
+- Never rewrite an entire file to change one function; edit only the necessary snippet.
+- Never add dependencies without asking first.
+- Never create tests without first reading the file to be tested.
+- Never read the full RTK catalog (docs/rtk.md) without explicit need.
 
-## Programação Funcional
-- Prefira funções puras: mesma entrada, mesma saída, sem side effects ocultos.
-- Dados imutáveis: nunca mute objetos ou arrays; use spread, map, filter, reduce.
-- Evite classes; use funções e composição.
-- Componentes React são funções; side effects só em hooks explícitos (useEffect, useCallback).
-- Extraia lógica de negócio de componentes para funções puras testáveis em src/lib/.
-- Em Rust, prefira funções que retornam Result<T, E> a mutações implícitas; evite estado mutável compartilhado.
+## Functional Programming
+- Prefer pure functions: same input, same output, no hidden side effects.
+- Immutable data: never mutate objects or arrays; use spread, map, filter, reduce.
+- Avoid classes; use functions and composition.
+- React components are functions; side effects only in explicit hooks (useEffect, useCallback).
+- Extract business logic from components into pure, testable functions in src/lib/.
+- In Rust, prefer functions that return Result<T, E> over implicit mutations; avoid shared mutable state.
 
-## Testes
-- Todo utilitário em src/lib/ tem um *.test.ts correspondente (Vitest).
-- Todo Tauri command Rust tem ao menos um teste unitário no mesmo arquivo (#[cfg(test)]).
-- Teste comportamento, não implementação.
-- Use os blocos #### Scenario: dos specs OpenSpec como referência de casos de teste.
-- Testes manuais devem ser incluídos como tasks e delegados a testers humanos, não automatizados.
-- Alterações no banco de dados DuckDB devem contem tasks para exclusão da versão antiga e criação da nova versão
+## Tests
+- Every utility in src/lib/ has a corresponding *.test.ts (Vitest).
+- Every Tauri Rust command has at least one unit test in the same file (#[cfg(test)]).
+- Test behavior, not implementation.
+- Use the #### Scenario: blocks from OpenSpec specs as test case references.
+- Manual tests must be included as tasks and delegated to human testers, not automated.
+- Changes to the DuckDB database must include tasks for deleting the old version and creating the new one.
 
 ## Stack
 - Frontend: React 19, TypeScript, Tailwind 4, shadcn/ui, Vitest
 - Backend: Tauri 2, Rust, DuckDB (duckdb = "1.4.4" bundled)
-- Testes: `cargo test` (Rust), `bun run test` (frontend)
-
-## RTK: Comandos Otimizados em Tokens
-Sempre prefixe comandos com `rtk`, inclusive em cadeias com `&&`. É sempre seguro: se não houver filtro dedicado, o comando passa through sem alteração.
-Exemplos: `rtk cargo build`, `rtk cargo test`, `rtk vitest`, `rtk tsc`, `rtk lint`, `rtk git diff`, `rtk git commit`, `rtk docker logs`.
-Estatísticas de economia: `rtk gain`. Catálogo completo de comandos: ver docs/rtk.md.
+- Tests: `cargo test` (Rust), `bun run test` (frontend)

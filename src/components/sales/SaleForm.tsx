@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { ProductCommand } from "@/components/ui/ProductCommand"
 import type { Product } from "@/types/product"
 import type { Sale, SaleItem, SaleItemInput } from "@/types/sale"
 
@@ -27,22 +28,17 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
 
   const [label, setLabel] = useState(sale?.label ?? "")
   const [items, setItems] = useState<CartItem[]>([])
-  const [search, setSearch] = useState("")
+  const [qty, setQty] = useState(1)
   const [searchOpen, setSearchOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const searchRef = useRef<HTMLDivElement>(null)
 
   const sellableProducts = useMemo(
     () => products.filter((p) => p.sellable && p.active),
     [products],
   )
 
-  const filteredProducts = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return sellableProducts.slice(0, 8)
-    return sellableProducts.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 8)
-  }, [search, sellableProducts])
+  const selectedIds = useMemo(() => items.map((i) => i.product_id), [items])
 
   useEffect(() => {
     if (sale) {
@@ -62,13 +58,14 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
   }, [sale, products])
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setSearchOpen(false)
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "F2") {
+        e.preventDefault()
+        setSearchOpen(true)
       }
     }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
+    document.addEventListener("keydown", handler)
+    return () => document.removeEventListener("keydown", handler)
   }, [])
 
   const addProduct = (product: Product) => {
@@ -76,7 +73,7 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
       const existing = prev.findIndex((i) => i.product_id === product.id)
       if (existing >= 0) {
         return prev.map((item, idx) =>
-          idx === existing ? { ...item, quantity: item.quantity + 1 } : item,
+          idx === existing ? { ...item, quantity: item.quantity + qty } : item,
         )
       }
       return [
@@ -85,12 +82,11 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
           product_id: product.id,
           product_name: product.name,
           final_price: product.final_price,
-          quantity: 1,
+          quantity: qty,
         },
       ]
     })
-    setSearch("")
-    setSearchOpen(false)
+    setQty(1)
   }
 
   const updateQuantity = (idx: number, raw: string) => {
@@ -153,32 +149,28 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
         </div>
 
         {/* Product search */}
-        <div className="flex flex-col gap-1.5" ref={searchRef}>
+        <div className="flex flex-col gap-1.5">
           <Label>Adicionar produto</Label>
-          <Input
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value)
-              setSearchOpen(true)
-            }}
-            onFocus={() => setSearchOpen(true)}
-            placeholder="Buscar por nome…"
-          />
-          {searchOpen && filteredProducts.length > 0 && (
-            <div className="rounded-md border border-teller-border bg-teller-card shadow-md">
-              {filteredProducts.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => addProduct(p)}
-                  className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-teller-accent/10 transition-colors"
-                >
-                  <span className="text-teller-text truncate">{p.name}</span>
-                  <span className="text-teller-muted ml-2 shrink-0">{brl.format(p.final_price)}</span>
-                </button>
-              ))}
+          <div className="flex gap-2 items-end">
+            <div className="flex flex-col gap-1 w-20 shrink-0">
+              <span className="text-xs text-teller-muted">Qtd.</span>
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                value={qty}
+                onChange={(e) => setQty(Math.max(1, Math.round(parseFloat(e.target.value) || 1)))}
+                className="h-9 text-sm"
+              />
             </div>
-          )}
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              className="flex-1 flex h-9 items-center rounded-md border border-teller-border bg-teller-card px-3 text-sm text-teller-muted hover:bg-teller-accent/5 transition-colors"
+            >
+              Buscar produto… <span className="ml-auto text-xs opacity-50">F2</span>
+            </button>
+          </div>
         </div>
 
         {/* Items list */}
@@ -239,6 +231,14 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
           </Button>
         </div>
       </form>
+
+      <ProductCommand
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        products={sellableProducts}
+        onSelect={addProduct}
+        selectedIds={selectedIds}
+      />
     </div>
   )
 }
