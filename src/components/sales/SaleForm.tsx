@@ -3,43 +3,32 @@ import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { computeMaxDiscount, applyGlobalDiscount } from "@/lib/pricing"
-import type { Product, PricingRates } from "@/types/product"
+import type { Product } from "@/types/product"
 import type { Sale, SaleItem, SaleItemInput } from "@/types/sale"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
-const pct = new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1 })
 
 type CartItem = {
   product_id: number
   product_name: string
   final_price: number
-  cost_price: number
-  expected_loss_rate: number
   quantity: number
-  discount: number
 }
-
-type GlobalMode = "R$" | "%"
 
 type Props = {
   sale: Sale | null
   products: Product[]
-  rates: PricingRates
   onCancel: () => void
   onSaved: () => void
 }
 
-export function SaleForm({ sale, products, rates, onCancel, onSaved }: Props) {
+export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
   const isEdit = sale !== null
 
   const [label, setLabel] = useState(sale?.label ?? "")
   const [items, setItems] = useState<CartItem[]>([])
   const [search, setSearch] = useState("")
   const [searchOpen, setSearchOpen] = useState(false)
-  const [focusedIdx, setFocusedIdx] = useState<number | null>(null)
-  const [globalDiscount, setGlobalDiscount] = useState("")
-  const [globalMode, setGlobalMode] = useState<GlobalMode>("R$")
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
@@ -60,18 +49,12 @@ export function SaleForm({ sale, products, rates, onCancel, onSaved }: Props) {
       invoke<SaleItem[]>("get_sale_items", { saleId: sale.id })
         .then((rows) => {
           setItems(
-            rows.map((row) => {
-              const p = products.find((x) => x.id === row.product_id)
-              return {
-                product_id: row.product_id,
-                product_name: row.product_name,
-                final_price: row.price,
-                cost_price: p?.cost_price ?? 0,
-                expected_loss_rate: p?.expected_loss_rate ?? 0,
-                quantity: row.quantity,
-                discount: row.discount,
-              }
-            }),
+            rows.map((row) => ({
+              product_id: row.product_id,
+              product_name: row.product_name,
+              final_price: row.price,
+              quantity: row.quantity,
+            })),
           )
         })
         .catch(() => setItems([]))
@@ -102,10 +85,7 @@ export function SaleForm({ sale, products, rates, onCancel, onSaved }: Props) {
           product_id: product.id,
           product_name: product.name,
           final_price: product.final_price,
-          cost_price: product.cost_price,
-          expected_loss_rate: product.expected_loss_rate,
           quantity: 1,
-          discount: 0,
         },
       ]
     })
@@ -113,14 +93,12 @@ export function SaleForm({ sale, products, rates, onCancel, onSaved }: Props) {
     setSearchOpen(false)
   }
 
-  const updateItem = (idx: number, field: "quantity" | "discount", raw: string) => {
+  const updateQuantity = (idx: number, raw: string) => {
     const value = parseFloat(raw) || 0
     setItems((prev) =>
-      prev.map((item, i) => {
-        if (i !== idx) return item
-        if (field === "discount") return { ...item, discount: Math.min(1, Math.max(0, value / 100)) }
-        return { ...item, quantity: Math.max(1, Math.round(value)) }
-      }),
+      prev.map((item, i) =>
+        i === idx ? { ...item, quantity: Math.max(1, Math.round(value)) } : item,
+      ),
     )
   }
 
@@ -128,26 +106,8 @@ export function SaleForm({ sale, products, rates, onCancel, onSaved }: Props) {
     setItems((prev) => prev.filter((_, i) => i !== idx))
   }
 
-  const handleGlobalDiscountChange = (raw: string) => {
-    setGlobalDiscount(raw)
-    const value = parseFloat(raw) || 0
-    if (value <= 0) return
-
-    if (globalMode === "%") {
-      const pctValue = Math.min(1, value / 100)
-      setItems((prev) => prev.map((item) => ({ ...item, discount: pctValue })))
-    } else {
-      const mapped = items.map((item) => ({
-        ...item,
-        final_price: item.final_price,
-      }))
-      const updated = applyGlobalDiscount(mapped, value)
-      setItems((prev) => prev.map((item, i) => ({ ...item, discount: updated[i].discount })))
-    }
-  }
-
   const orderTotal = useMemo(
-    () => items.reduce((sum, i) => sum + i.final_price * i.quantity * (1 - i.discount), 0),
+    () => items.reduce((sum, i) => sum + i.final_price * i.quantity, 0),
     [items],
   )
 
@@ -162,7 +122,7 @@ export function SaleForm({ sale, products, rates, onCancel, onSaved }: Props) {
     const payload: SaleItemInput[] = items.map((i) => ({
       product_id: i.product_id,
       quantity: i.quantity,
-      discount: i.discount,
+      discount: 0,
     }))
     try {
       if (isEdit) {
@@ -224,106 +184,39 @@ export function SaleForm({ sale, products, rates, onCancel, onSaved }: Props) {
         {/* Items list */}
         {items.length > 0 && (
           <div className="flex flex-col gap-2">
-            {items.map((item, idx) => {
-              const { maxDiscountValue, maxDiscountPct } = computeMaxDiscount(
-                { cost_price: item.cost_price, expected_loss_rate: item.expected_loss_rate, final_price: item.final_price },
-                rates,
-              )
-              const discountedPrice = item.final_price * (1 - item.discount)
-              const floorPrice = item.final_price - maxDiscountValue
-              const belowFloor = item.discount > 0 && discountedPrice < floorPrice - 0.001
-              const showMaxHint = focusedIdx === idx || item.discount > 0
-
-              return (
-                <div key={idx} className="rounded-lg border border-teller-border bg-teller-card p-3 flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-teller-text truncate flex-1">{item.product_name}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeItem(idx)}
-                      className="text-teller-muted hover:text-red-500 text-xs ml-2"
-                    >
-                      ✕
-                    </button>
+            {items.map((item, idx) => (
+              <div key={idx} className="rounded-lg border border-teller-border bg-teller-card p-3 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-teller-text truncate flex-1">{item.product_name}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeItem(idx)}
+                    className="text-teller-muted hover:text-red-500 text-xs ml-2"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="flex gap-2 items-end">
+                  <div className="flex flex-col gap-1 w-20">
+                    <span className="text-xs text-teller-muted">Qtd.</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={item.quantity}
+                      onChange={(e) => updateQuantity(idx, e.target.value)}
+                      className="h-8 text-sm"
+                    />
                   </div>
-                  <div className="flex gap-2 items-end">
-                    <div className="flex flex-col gap-1 w-20">
-                      <span className="text-xs text-teller-muted">Qtd.</span>
-                      <Input
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={item.quantity}
-                        onChange={(e) => updateItem(idx, "quantity", e.target.value)}
-                        className="h-8 text-sm"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1 flex-1">
-                      <span className="text-xs text-teller-muted">
-                        Desconto (%)
-                        {showMaxHint && (
-                          <span className={`ml-1 ${belowFloor ? "text-red-500" : "text-teller-muted"}`}>
-                            · máx. {brl.format(maxDiscountValue)} ({pct.format(maxDiscountPct)})
-                          </span>
-                        )}
-                      </span>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step="0.01"
-                        value={item.discount > 0 ? (item.discount * 100).toFixed(2) : ""}
-                        placeholder="0"
-                        onFocus={() => setFocusedIdx(idx)}
-                        onBlur={() => setFocusedIdx(null)}
-                        onChange={(e) => updateItem(idx, "discount", e.target.value)}
-                        className={`h-8 text-sm ${belowFloor ? "border-red-500 focus:ring-red-500" : ""}`}
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1 w-24 text-right">
-                      <span className="text-xs text-teller-muted">Subtotal</span>
-                      <span className="text-sm font-medium text-teller-text h-8 flex items-center justify-end">
-                        {brl.format(item.final_price * item.quantity * (1 - item.discount))}
-                      </span>
-                    </div>
+                  <div className="flex flex-col gap-1 w-24 text-right ml-auto">
+                    <span className="text-xs text-teller-muted">Subtotal</span>
+                    <span className="text-sm font-medium text-teller-text h-8 flex items-center justify-end">
+                      {brl.format(item.final_price * item.quantity)}
+                    </span>
                   </div>
                 </div>
-              )
-            })}
-          </div>
-        )}
-
-        {/* Global discount */}
-        {items.length > 0 && (
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <Label>Desconto global</Label>
-              <div className="flex gap-1 rounded-md border border-teller-border p-0.5 text-xs">
-                {(["R$", "%"] as GlobalMode[]).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => { setGlobalMode(m); setGlobalDiscount("") }}
-                    className={[
-                      "px-2 py-0.5 rounded transition-colors",
-                      globalMode === m
-                        ? "bg-teller-accent text-white"
-                        : "text-teller-muted hover:text-teller-text",
-                    ].join(" ")}
-                  >
-                    {m}
-                  </button>
-                ))}
               </div>
-            </div>
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              value={globalDiscount}
-              onChange={(e) => handleGlobalDiscountChange(e.target.value)}
-              placeholder={globalMode === "R$" ? "0,00" : "0"}
-            />
+            ))}
           </div>
         )}
 

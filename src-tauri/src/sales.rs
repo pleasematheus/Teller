@@ -232,19 +232,53 @@ pub fn update_sale(
 pub fn do_close_sale_work(
     conn: &Connection,
     sale_id: i64,
+    items: &[SaleItemInput],
     payments: &[SalePaymentInput],
 ) -> Result<Vec<String>, String> {
-    let (status, total_value): (String, f64) = conn
+    let status: String = conn
         .query_row(
-            r#"SELECT status, total_value FROM "Sales" WHERE id = ?"#,
+            r#"SELECT status FROM "Sales" WHERE id = ?"#,
             params![sale_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )
         .map_err(|_| format!("Venda {} não encontrada", sale_id))?;
 
     if status != "open" {
         return Err("Venda já foi fechada".to_string());
     }
+
+    for item in items {
+        let price: f64 = conn
+            .query_row(
+                r#"SELECT price FROM "Sales_Products" WHERE sale_id = ? AND product_id = ?"#,
+                params![sale_id, item.product_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| format!("Item {} não encontrado no pedido", item.product_id))?;
+
+        let discount = item.discount.clamp(0.0, 1.0);
+        let discounted_price = price * (1.0 - discount);
+
+        conn.execute(
+            r#"UPDATE "Sales_Products" SET discount = ?, discounted_price = ? WHERE sale_id = ? AND product_id = ?"#,
+            params![discount, discounted_price, sale_id, item.product_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    let total_value: f64 = conn
+        .query_row(
+            r#"SELECT COALESCE(SUM(discounted_price * quantity), 0.0) FROM "Sales_Products" WHERE sale_id = ?"#,
+            params![sale_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        r#"UPDATE "Sales" SET total_value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+        params![total_value, sale_id],
+    )
+    .map_err(|e| e.to_string())?;
 
     let total_paid: f64 = payments.iter().map(|p| p.amount_paid).sum();
     if (total_paid - total_value).abs() > 0.01 {
@@ -430,17 +464,26 @@ pub fn do_close_sale_work(
 #[tauri::command]
 pub fn close_sale(
     id: i64,
+    items: Vec<SaleItemInput>,
     payments: Vec<SalePaymentInput>,
     state: State<DbState>,
 ) -> Result<Vec<String>, String> {
     if payments.is_empty() {
         return Err("Informe ao menos um pagamento".to_string());
     }
+    if items.is_empty() {
+        return Err("A venda deve ter ao menos um item".to_string());
+    }
+    for item in &items {
+        if item.quantity <= 0 {
+            return Err("Quantidade de cada item deve ser positiva".to_string());
+        }
+    }
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
 
-    match do_close_sale_work(&conn, id, &payments) {
+    match do_close_sale_work(&conn, id, &items, &payments) {
         Ok(warnings) => {
             conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
             Ok(warnings)
@@ -570,9 +613,13 @@ mod tests {
             params![sale_id, insumo_id],
         ).unwrap();
 
+        let items = vec![
+            SaleItemInput { product_id: sellable_id, quantity: 2, discount: 0.0 },
+            SaleItemInput { product_id: insumo_id, quantity: 1, discount: 0.0 },
+        ];
         let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
-        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         let prod_count: i64 = conn
@@ -618,9 +665,10 @@ mod tests {
             params![sale_id, foto_id],
         ).unwrap();
 
+        let items = vec![SaleItemInput { product_id: foto_id, quantity: 3, discount: 0.0 }];
         let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
-        let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         assert!(warnings.is_empty(), "Não deveria haver avisos com estoque suficiente");
@@ -662,9 +710,10 @@ mod tests {
             params![sale_id, product_id],
         ).unwrap();
 
+        let items = vec![SaleItemInput { product_id: product_id, quantity: 1, discount: 0.0 }];
         let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
-        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         let cost: Option<f64> = conn.query_row(
@@ -699,9 +748,10 @@ mod tests {
             params![sale_id, foto_id],
         ).unwrap();
 
+        let items = vec![SaleItemInput { product_id: foto_id, quantity: 1, discount: 0.0 }];
         let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
-        let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         assert_eq!(warnings.len(), 1, "Deveria haver 1 aviso de estoque insuficiente");
@@ -746,9 +796,10 @@ mod tests {
             params![sale_id, product_id],
         ).unwrap();
 
+        let items = vec![SaleItemInput { product_id: product_id, quantity: 1, discount: 0.0 }];
         let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 100.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
-        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         let (net, fee_pct, fixed): (f64, f64, f64) = conn.query_row(
@@ -794,12 +845,13 @@ mod tests {
             params![sale_id, product_id],
         ).unwrap();
 
+        let items = vec![SaleItemInput { product_id: product_id, quantity: 1, discount: 0.0 }];
         let payments = vec![
             SalePaymentInput { payment_method_id: pm_id, amount_paid: 100.0, installments: 1 },
             SalePaymentInput { payment_method_id: pm_id, amount_paid: 100.0, installments: 3 },
         ];
         conn.execute_batch("BEGIN").unwrap();
-        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         let nets: Vec<f64> = {
@@ -835,9 +887,10 @@ mod tests {
             params![sale_id, product_id],
         ).unwrap();
 
+        let items = vec![SaleItemInput { product_id: product_id, quantity: 1, discount: 0.0 }];
         let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 50.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
-        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         let net: f64 = conn.query_row(
@@ -873,9 +926,10 @@ mod tests {
             params![sale_id, product_id],
         ).unwrap();
 
+        let items = vec![SaleItemInput { product_id: product_id, quantity: 3, discount: 0.0 }];
         let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
-        let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         assert!(warnings.is_empty(), "Não deveria haver avisos com estoque suficiente");
@@ -914,9 +968,10 @@ mod tests {
             params![sale_id, product_id],
         ).unwrap();
 
+        let items = vec![SaleItemInput { product_id: product_id, quantity: 1, discount: 0.0 }];
         let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
-        let warnings = do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         assert_eq!(warnings.len(), 1, "Deve haver 1 aviso de estoque insuficiente");
@@ -962,9 +1017,10 @@ mod tests {
             params![sale_id, product_id],
         ).unwrap();
 
+        let items = vec![SaleItemInput { product_id: product_id, quantity: 1, discount: 0.0 }];
         let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
         conn.execute_batch("BEGIN").unwrap();
-        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
         let order_count: i64 = conn.query_row(
@@ -980,5 +1036,88 @@ mod tests {
             params![sale_id], |r| r.get(0),
         ).unwrap();
         assert_eq!(input_count, 0, "Não deve haver Production_Inputs para produto de revenda");
+    }
+
+    #[test]
+    fn close_sale_applies_item_discount_and_recalculates_total() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Foto", true);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 20.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 2, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        // 10% discount on 10.0 → discounted_price = 9.0; total = 9.0 * 2 = 18.0
+        let items = vec![SaleItemInput { product_id, quantity: 2, discount: 0.1 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 18.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        // DECIMAL(10,2) reads correctly; discounted_price and total_value reflect the applied discount
+        let discounted_price: f64 = conn.query_row(
+            r#"SELECT CAST(discounted_price AS DOUBLE) FROM "Sales_Products" WHERE sale_id = ?"#,
+            params![sale_id], |r| r.get(0),
+        ).unwrap();
+        assert!((discounted_price - 9.0).abs() < 1e-6, "discounted_price deve ser 9.0, foi {}", discounted_price);
+
+        let total_value: f64 = conn.query_row(
+            r#"SELECT CAST(total_value AS DOUBLE) FROM "Sales" WHERE id = ?"#,
+            params![sale_id], |r| r.get(0),
+        ).unwrap();
+        assert!((total_value - 18.0).abs() < 1e-6, "total_value deve ser 18.0, foi {}", total_value);
+    }
+
+    #[test]
+    fn close_sale_payment_validated_against_discounted_total() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Foto", true);
+
+        let make_sale = |total: f64| -> i64 {
+            let sid: i64 = conn.query_row(
+                r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+                   VALUES (?, '', 'open', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                   RETURNING id"#,
+                params![user_id, total], |r| r.get(0),
+            ).unwrap();
+            conn.execute(
+                r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+                   VALUES (?, ?, 1, 20.0, 0.0, 20.0, CURRENT_TIMESTAMP)"#,
+                params![sid, product_id],
+            ).unwrap();
+            sid
+        };
+
+        // Paying full price (20.0) when discount brings total to 18.0 should fail
+        let sale1 = make_sale(20.0);
+        let items_with_discount = vec![SaleItemInput { product_id, quantity: 1, discount: 0.1 }];
+        let pay_full = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 20.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        let result = do_close_sale_work(&conn, sale1, &items_with_discount, &pay_full);
+        let _ = conn.execute_batch("ROLLBACK");
+        assert!(result.is_err(), "Pagar 20.0 quando total descontado é 18.0 deve falhar");
+
+        // Paying the discounted total (18.0) should succeed
+        let sale2 = make_sale(20.0);
+        let items2 = vec![SaleItemInput { product_id, quantity: 1, discount: 0.1 }];
+        let pay_discounted = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 18.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        let result2 = do_close_sale_work(&conn, sale2, &items2, &pay_discounted);
+        conn.execute_batch("COMMIT").unwrap();
+        assert!(result2.is_ok(), "Pagar 18.0 quando total descontado é 18.0 deve ter sucesso");
     }
 }

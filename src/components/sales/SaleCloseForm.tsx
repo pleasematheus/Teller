@@ -1,11 +1,25 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
-import type { Sale, PaymentMethod, SalePaymentInput } from "@/types/sale"
+import { Label } from "@/components/ui/label"
+import { computeMaxDiscount, applyGlobalDiscount } from "@/lib/pricing"
+import type { Product, PricingRates } from "@/types/product"
+import type { Sale, SaleItem, SaleItemInput, PaymentMethod, SalePaymentInput } from "@/types/sale"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
+const pct = new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1 })
+
+type CartItem = {
+  product_id: number
+  product_name: string
+  final_price: number
+  cost_price: number
+  expected_loss_rate: number
+  quantity: number
+  discount: number
+}
 
 type PaymentLine = {
   methodId: number
@@ -13,18 +27,47 @@ type PaymentLine = {
   amount: string
 }
 
+type GlobalMode = "R$" | "%"
+
 type Props = {
   sale: Sale
+  products: Product[]
+  rates: PricingRates
   onCancel: () => void
   onSaved: () => void
 }
 
-export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
+export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Props) {
+  const [cartItems, setCartItems] = useState<CartItem[]>([])
   const [methods, setMethods] = useState<PaymentMethod[]>([])
   const [payments, setPayments] = useState<PaymentLine[]>([{ methodId: 0, installments: 1, amount: "" }])
+  const [globalDiscount, setGlobalDiscount] = useState("")
+  const [globalMode, setGlobalMode] = useState<GlobalMode>("R$")
+  const [focusedIdx, setFocusedIdx] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    invoke<SaleItem[]>("get_sale_items", { saleId: sale.id })
+      .then((rows) => {
+        setCartItems(
+          rows.map((row) => {
+            const p = products.find((x) => x.id === row.product_id)
+            return {
+              product_id: row.product_id,
+              product_name: row.product_name,
+              final_price: row.price,
+              cost_price: p?.cost_price ?? 0,
+              expected_loss_rate: p?.expected_loss_rate ?? 0,
+              quantity: row.quantity,
+              discount: row.discount,
+            }
+          }),
+        )
+      })
+      .catch(() => {})
+  }, [sale.id, products])
 
   useEffect(() => {
     invoke<PaymentMethod[]>("list_payment_methods")
@@ -38,8 +81,39 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
       .catch(() => {})
   }, [])
 
+  const updateItemDiscount = (idx: number, raw: string) => {
+    const value = parseFloat(raw) || 0
+    setCartItems((prev) =>
+      prev.map((item, i) =>
+        i === idx ? { ...item, discount: Math.min(1, Math.max(0, value / 100)) } : item,
+      ),
+    )
+  }
+
+  const handleGlobalDiscountChange = (raw: string) => {
+    setGlobalDiscount(raw)
+    const value = parseFloat(raw) || 0
+    if (value <= 0) return
+
+    if (globalMode === "%") {
+      const pctValue = Math.min(1, value / 100)
+      setCartItems((prev) => prev.map((item) => ({ ...item, discount: pctValue })))
+    } else {
+      const updated = applyGlobalDiscount(
+        cartItems.map((item) => ({ ...item, final_price: item.final_price })),
+        value,
+      )
+      setCartItems((prev) => prev.map((item, i) => ({ ...item, discount: updated[i].discount })))
+    }
+  }
+
+  const discountedTotal = useMemo(
+    () => cartItems.reduce((sum, i) => sum + i.final_price * i.quantity * (1 - i.discount), 0),
+    [cartItems],
+  )
+
   const totalPaid = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
-  const remaining = sale.total_value - totalPaid
+  const remaining = discountedTotal - totalPaid
   const canSubmit =
     Math.abs(remaining) < 0.01 &&
     payments.length > 0 &&
@@ -74,12 +148,21 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
     setError(null)
     setSubmitting(true)
     try {
+      const items: SaleItemInput[] = cartItems.map((i) => ({
+        product_id: i.product_id,
+        quantity: i.quantity,
+        discount: i.discount,
+      }))
       const paymentInputs: SalePaymentInput[] = payments.map((p) => ({
         payment_method_id: p.methodId,
         amount_paid: parseFloat(p.amount) || 0,
         installments: p.installments,
       }))
-      const stockWarnings = await invoke<string[]>("close_sale", { id: sale.id, payments: paymentInputs })
+      const stockWarnings = await invoke<string[]>("close_sale", {
+        id: sale.id,
+        items,
+        payments: paymentInputs,
+      })
       onSaved()
       if (stockWarnings.length > 0) {
         setWarnings(stockWarnings)
@@ -102,10 +185,99 @@ export function SaleCloseForm({ sale, onCancel, onSaved }: Props) {
             <p className="text-sm text-teller-muted truncate">{sale.label}</p>
           )}
           <div className="flex justify-between text-sm">
-            <span className="text-teller-muted">Total do pedido</span>
-            <span className="font-medium text-teller-text">{brl.format(sale.total_value)}</span>
+            <span className="text-teller-muted">Total a pagar</span>
+            <span className="font-medium text-teller-text">{brl.format(discountedTotal)}</span>
           </div>
         </div>
+
+        {/* Items with discount */}
+        {cartItems.length > 0 && (
+          <div className="flex flex-col gap-2">
+            {cartItems.map((item, idx) => {
+              const { maxDiscountValue, maxDiscountPct } = computeMaxDiscount(
+                { cost_price: item.cost_price, expected_loss_rate: item.expected_loss_rate, final_price: item.final_price },
+                rates,
+              )
+              const discountedPrice = item.final_price * (1 - item.discount)
+              const floorPrice = item.final_price - maxDiscountValue
+              const belowFloor = item.discount > 0 && discountedPrice < floorPrice - 0.001
+              const showMaxHint = focusedIdx === idx || item.discount > 0
+
+              return (
+                <div key={idx} className="rounded-lg border border-teller-border bg-teller-card p-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-teller-text truncate flex-1">{item.product_name}</span>
+                    <span className="text-xs text-teller-muted ml-2 shrink-0">×{item.quantity}</span>
+                  </div>
+                  <div className="flex gap-2 items-end">
+                    <div className="flex flex-col gap-1 flex-1">
+                      <span className="text-xs text-teller-muted">
+                        Desconto (%)
+                        {showMaxHint && (
+                          <span className={`ml-1 ${belowFloor ? "text-red-500" : "text-teller-muted"}`}>
+                            · máx. {brl.format(maxDiscountValue)} ({pct.format(maxDiscountPct)})
+                          </span>
+                        )}
+                      </span>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step="0.01"
+                        value={item.discount > 0 ? (item.discount * 100).toFixed(2) : ""}
+                        placeholder="0"
+                        onFocus={() => setFocusedIdx(idx)}
+                        onBlur={() => setFocusedIdx(null)}
+                        onChange={(e) => updateItemDiscount(idx, e.target.value)}
+                        className={`h-8 text-sm ${belowFloor ? "border-red-500 focus:ring-red-500" : ""}`}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1 w-28 text-right">
+                      <span className="text-xs text-teller-muted">Subtotal</span>
+                      <span className="text-sm font-medium text-teller-text h-8 flex items-center justify-end">
+                        {brl.format(item.final_price * item.quantity * (1 - item.discount))}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Global discount */}
+        {cartItems.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <Label>Desconto global</Label>
+              <div className="flex gap-1 rounded-md border border-teller-border p-0.5 text-xs">
+                {(["R$", "%"] as GlobalMode[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => { setGlobalMode(m); setGlobalDiscount("") }}
+                    className={[
+                      "px-2 py-0.5 rounded transition-colors",
+                      globalMode === m
+                        ? "bg-teller-accent text-white"
+                        : "text-teller-muted hover:text-teller-text",
+                    ].join(" ")}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={globalDiscount}
+              onChange={(e) => handleGlobalDiscountChange(e.target.value)}
+              placeholder={globalMode === "R$" ? "0,00" : "0"}
+            />
+          </div>
+        )}
 
         {/* Payment lines */}
         <div className="flex flex-col gap-3">

@@ -227,7 +227,7 @@ mod tests {
     use crate::auth::insert_user;
     use crate::products::insert_product;
     use crate::settings::insert_payment_method;
-    use crate::sales::{do_close_sale_work, SalePaymentInput};
+    use crate::sales::{do_close_sale_work, SaleItemInput, SalePaymentInput};
     use duckdb::params;
 
     fn insert_financial_entry(
@@ -291,13 +291,14 @@ mod tests {
         )
         .unwrap();
 
+        let items = vec![SaleItemInput { product_id, quantity: 1, discount: 0.0 }];
         let payments = vec![SalePaymentInput {
             payment_method_id: pm_id,
             amount_paid: 20.0,
             installments: 1,
         }];
         conn.execute_batch("BEGIN").unwrap();
-        do_close_sale_work(&conn, sale_id, &payments).unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute(
             r#"UPDATE "Sales" SET updated_at = '2026-05-10' WHERE id = ?"#,
             params![sale_id],

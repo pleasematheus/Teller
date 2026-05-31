@@ -27,6 +27,7 @@
 - Todo Tauri command Rust tem ao menos um teste unitário no mesmo arquivo (#[cfg(test)]).
 - Teste comportamento, não implementação.
 - Use os blocos #### Scenario: dos specs OpenSpec como referência de casos de teste.
+- Testes manuais devem ser incluídos como tasks e delegados a testers humanos, não automatizados.
 
 ## Stack
 - Frontend: React 19, TypeScript, Tailwind 4, shadcn/ui, Vitest
