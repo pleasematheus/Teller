@@ -140,14 +140,17 @@ pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> 
 }
 
 pub fn get_product_loss_rate_raw(conn: &Connection, product_id: i64) -> f64 {
+    // O motivo pode vir anotado como "perda - observação" (create_stock_adjustment
+    // concatena a nota). split_part extrai o motivo-base para a medição não ignorar
+    // perdas registradas com observação.
     let (total_loss, total_resolved): (f64, f64) = conn
         .query_row(
             r#"SELECT
-               COALESCE(SUM(CASE WHEN motive = 'perda' THEN quantity ELSE 0 END), 0.0),
+               COALESCE(SUM(CASE WHEN split_part(motive, ' - ', 1) = 'perda' THEN quantity ELSE 0 END), 0.0),
                COALESCE(SUM(quantity), 0.0)
                FROM "Stock_Movements"
                WHERE product_id = ? AND movement_type = 'out'
-               AND motive IN ('perda', 'venda')
+               AND split_part(motive, ' - ', 1) IN ('perda', 'venda')
                AND created_at >= now()::TIMESTAMP - INTERVAL '12 MONTHS'"#,
             params![product_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
@@ -277,24 +280,23 @@ pub fn create_product(
     cost_price: f64,
     markup: f64,
     final_price: f64,
-    expected_loss_rate: f64,
     unit: String,
     profit_margin: f64,
-    loss_mode: String,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
-    validate_product(&name, cost_price, expected_loss_rate)?;
-    validate_loss_mode(&loss_mode)?;
+    // A loss rate e o modo são propriedade da compra; produto novo nasce com
+    // expected_loss_rate = 0 e loss_mode no default da coluna ('manual').
+    validate_product(&name, cost_price, 0.0)?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
         r#"INSERT INTO "Products"
            (name, description, active, sellable, cost_price, markup, final_price,
-            expected_loss_rate, unit, profit_margin, loss_mode, updated_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            expected_loss_rate, unit, profit_margin, updated_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
         params![name, description, active, sellable, cost_price, markup, final_price,
-                expected_loss_rate, unit, profit_margin, loss_mode],
+                unit, profit_margin],
     )
     .map_err(|e| e.to_string())?;
 
@@ -311,15 +313,14 @@ pub fn update_product(
     cost_price: f64,
     markup: f64,
     final_price: f64,
-    expected_loss_rate: f64,
     unit: String,
     profit_margin: f64,
-    loss_mode: String,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
-    validate_product(&name, cost_price, expected_loss_rate)?;
-    validate_loss_mode(&loss_mode)?;
+    // expected_loss_rate e loss_mode são fixados pela compra, não pela edição do
+    // produto; ficam fora do UPDATE para não sobrescrever a perda já congelada.
+    validate_product(&name, cost_price, 0.0)?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
@@ -327,11 +328,11 @@ pub fn update_product(
         .execute(
             r#"UPDATE "Products"
                SET name = ?, description = ?, active = ?, sellable = ?,
-                   cost_price = ?, markup = ?, final_price = ?, expected_loss_rate = ?,
-                   unit = ?, profit_margin = ?, loss_mode = ?, updated_at = CURRENT_TIMESTAMP
+                   cost_price = ?, markup = ?, final_price = ?,
+                   unit = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
             params![name, description, active, sellable, cost_price, markup, final_price,
-                    expected_loss_rate, unit, profit_margin, loss_mode, id],
+                    unit, profit_margin, id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -622,6 +623,63 @@ mod tests {
     }
 
     #[test]
+    fn update_product_does_not_touch_loss_fields() {
+        // A edição do produto não altera expected_loss_rate nem loss_mode fixados pela compra.
+        let conn = test_db();
+        let id = insert_product(&conn, "Insumo", false);
+        conn.execute(
+            r#"UPDATE "Products" SET expected_loss_rate = 0.2, loss_mode = 'auto',
+               updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![id],
+        )
+        .unwrap();
+        // UPDATE espelhando a nova forma de update_product (sem colunas de perda).
+        conn.execute(
+            r#"UPDATE "Products"
+               SET name = ?, description = ?, active = ?, sellable = ?,
+                   cost_price = ?, markup = ?, final_price = ?,
+                   unit = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?"#,
+            params!["Insumo Novo", Option::<String>::None, true, false,
+                    12.0, 1.5, 18.0, "unidade", 0.3, id],
+        )
+        .unwrap();
+        let (loss, mode): (f64, String) = conn
+            .query_row(
+                r#"SELECT CAST(expected_loss_rate AS DOUBLE), loss_mode FROM "Products" WHERE id = ?"#,
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!((loss - 0.2).abs() < 1e-9, "loss mudou: {}", loss);
+        assert_eq!(mode, "auto");
+    }
+
+    #[test]
+    fn create_product_defaults_loss_to_zero_and_manual() {
+        // INSERT espelhando a nova forma de create_product (perda 0, modo no default).
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Products"
+               (name, description, active, sellable, cost_price, markup, final_price,
+                expected_loss_rate, unit, profit_margin, updated_at, created_at)
+               VALUES ('Novo', NULL, true, false, 5.0, 1.5, 7.5, 0.0, 'unidade', 0.0,
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        )
+        .unwrap();
+        let (loss, mode): (f64, String) = conn
+            .query_row(
+                r#"SELECT CAST(expected_loss_rate AS DOUBLE), loss_mode FROM "Products" WHERE name = 'Novo'"#,
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(loss, 0.0);
+        assert_eq!(mode, "manual");
+    }
+
+    #[test]
     fn pricing_rates_no_sales_returns_zeroed_cv_df() {
         let conn = test_db();
         insert_business_settings(&conn, "Empresa");
@@ -896,6 +954,26 @@ mod tests {
         let rate = get_product_loss_rate_raw(&conn, id);
         let expected = 5.0 / 15.0;
         assert!((rate - expected).abs() < 1e-9, "expected {}, got {}", expected, rate);
+    }
+
+    #[test]
+    fn loss_rate_counts_annotated_perda_motive() {
+        // Perda registrada com observação vira "perda - <nota>"; deve contar mesmo assim.
+        // 15 vendidos + 5 perdidos (anotados) → 5 / 20 = 0.25
+        let conn = test_db();
+        let id = insert_product(&conn, "Papel", false);
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 15.0, 'out', 'venda', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 5.0, 'out', 'perda - Impressão com defeito', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        let rate = get_product_loss_rate_raw(&conn, id);
+        assert!((rate - 0.25).abs() < 1e-9, "expected 0.25, got {}", rate);
     }
 
     #[test]

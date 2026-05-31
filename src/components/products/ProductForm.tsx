@@ -32,7 +32,6 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
   const [sellable, setSellable] = useState(product?.sellable ?? true)
   const [unit, setUnit] = useState(product?.unit ?? "unidade")
   const [costPrice, setCostPrice] = useState(product ? String(product.cost_price) : "")
-  const [lossRatePct, setLossRatePct] = useState(product ? String(product.expected_loss_rate * 100) : "0")
   const [finalPrice, setFinalPrice] = useState(product ? String(product.final_price) : "")
   const [noMarginHistory, setNoMarginHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +44,9 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
   const [addingComponent, setAddingComponent] = useState(false)
   const [editingQty, setEditingQty] = useState<Record<number, string>>({})
 
-  const parsedLossRate = (parseFloat(lossRatePct) || 0) / 100
+  // A taxa de perda e o modo são fixados pela compra; aqui são apenas leitura.
+  const lossRate = product?.expected_loss_rate ?? 0
+  const lossMode = product?.loss_mode ?? "manual"
   const parsedFinalPrice = parseFloat(finalPrice) || 0
 
   const hasComponents = components.length > 0
@@ -70,7 +71,7 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
   // CMV for the price floor input
   const currentCmv = hasComponents && derivedCmv !== null
     ? derivedCmv
-    : (parsedLossRate < 1 && parsedLossRate >= 0 ? parsedCost / (1 - parsedLossRate) : 0)
+    : (lossRate < 1 && lossRate >= 0 ? parsedCost / (1 - lossRate) : 0)
 
   const breakdown = useMemo(
     () => {
@@ -78,9 +79,9 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
         // CMV is already the rolled-up value; treat loss_rate=0 for the breakdown
         return computeMarginFromPrice(derivedCmv, 0, parsedFinalPrice, rates)
       }
-      return computeMarginFromPrice(parsedCost, parsedLossRate, parsedFinalPrice, rates)
+      return computeMarginFromPrice(parsedCost, lossRate, parsedFinalPrice, rates)
     },
-    [parsedCost, parsedLossRate, parsedFinalPrice, rates, hasComponents, derivedCmv],
+    [parsedCost, lossRate, parsedFinalPrice, rates, hasComponents, derivedCmv],
   )
 
 
@@ -100,7 +101,7 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
           } else {
             setNoMarginHistory(false)
             // Preço sugerido = computePrice com a margem realizada
-            const suggested = computePrice(parsedCost, parsedLossRate, rates, rate)
+            const suggested = computePrice(parsedCost, lossRate, rates, rate)
             setFinalPrice(suggested.final_price > 0 ? suggested.final_price.toFixed(2) : "")
           }
         })
@@ -192,9 +193,7 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
       costPrice: parsedCost,
       markup: breakdown.markup_percent,
       finalPrice: parsedFinalPrice,
-      expectedLossRate: hasComponents ? 0 : parsedLossRate,
       profitMargin: breakdown.profit_margin,
-      lossMode: "manual",
     }
 
     try {
@@ -302,19 +301,20 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
           )}
         </div>
 
-        {/* Loss rate — only relevant for products without components */}
+        {/* Loss rate — read-only; fixed by the purchase event */}
         {!hasComponents && (
           <div className="flex flex-col gap-1.5">
-            <Label>Taxa de perda (%)</Label>
-            <Input
-              type="number"
-              min={0}
-              max={99}
-              step="0.01"
-              value={lossRatePct}
-              onChange={(e) => setLossRatePct(e.target.value)}
-              placeholder="0"
-            />
+            <Label>Taxa de perda</Label>
+            <div className="flex h-10 w-full items-center justify-between rounded-md border border-teller-border bg-teller-card px-3 text-sm text-teller-muted">
+              {isEdit ? (
+                <>
+                  <span>{pct.format(lossRate)}</span>
+                  <span className="text-xs">{lossMode === "auto" ? "automático" : "manual"}</span>
+                </>
+              ) : (
+                <span>Definida na primeira compra do insumo</span>
+              )}
+            </div>
           </div>
         )}
 

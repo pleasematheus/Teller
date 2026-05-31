@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::DbState;
-use crate::products::get_product_loss_rate_raw;
+use crate::products::{get_product_loss_rate_raw, validate_loss_mode};
 
 #[derive(Serialize)]
 pub struct StockItem {
@@ -21,6 +21,7 @@ pub struct PurchaseItemInput {
     pub box_qty: Option<f64>,
     pub unit_qty: Option<f64>,
     pub loss_rate: Option<f64>,
+    pub loss_mode: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -99,6 +100,12 @@ pub fn do_purchase_work(
         .map_err(|e| e.to_string())?;
 
     for item in items {
+        // The purchase is the sole writer of the supply's loss rate and mode.
+        // 'auto' (loss_rate = None) freezes the currently measured rate; 'manual'
+        // freezes the operator override. Mode defaults to 'manual' when absent.
+        let loss_mode = item.loss_mode.as_deref().unwrap_or("manual");
+        validate_loss_mode(loss_mode)?;
+
         let effective_loss = item.loss_rate
             .unwrap_or_else(|| get_product_loss_rate_raw(conn, item.product_id));
 
@@ -115,9 +122,10 @@ pub fn do_purchase_work(
         .map_err(|e| e.to_string())?;
 
         conn.execute(
-            r#"UPDATE "Products" SET expected_loss_rate = ?, updated_at = CURRENT_TIMESTAMP
+            r#"UPDATE "Products"
+               SET expected_loss_rate = ?, loss_mode = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
-            params![effective_loss, item.product_id],
+            params![effective_loss, loss_mode, item.product_id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -473,6 +481,7 @@ mod tests {
             box_qty: None,
             unit_qty: None,
             loss_rate: None,
+            loss_mode: None,
         }];
         do_purchase_work(&conn, 0.0, &items).unwrap();
 
@@ -508,6 +517,7 @@ mod tests {
             box_qty: None,
             unit_qty: None,
             loss_rate: Some(0.15),
+            loss_mode: Some("manual".to_string()),
         }];
         do_purchase_work(&conn, 0.0, &items).unwrap();
 
@@ -528,6 +538,92 @@ mod tests {
             )
             .unwrap();
         assert!((product_loss - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn purchase_auto_mode_freezes_measured_rate_and_records_mode() {
+        // Scenario: item em modo 'auto' (loss_rate=None) congela a taxa medida e grava loss_mode='auto'.
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Bobina", false);
+        // Resolved movements → measured loss = 5 / (20 + 5) = 0.2
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 20.0, 'out', 'venda', CURRENT_TIMESTAMP)"#,
+            params![product_id],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 5.0, 'out', 'perda', CURRENT_TIMESTAMP)"#,
+            params![product_id],
+        ).unwrap();
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 10.0,
+            unit_cost: 3.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: None,
+            loss_mode: Some("auto".to_string()),
+        }];
+        do_purchase_work(&conn, 0.0, &items).unwrap();
+
+        let (loss, mode): (f64, String) = conn
+            .query_row(
+                r#"SELECT CAST(expected_loss_rate AS DOUBLE), loss_mode FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!((loss - 0.2).abs() < 1e-9, "expected frozen 0.2, got {}", loss);
+        assert_eq!(mode, "auto");
+    }
+
+    #[test]
+    fn purchase_manual_mode_freezes_override_and_records_mode() {
+        // Scenario: item em modo 'manual' com override grava o valor e loss_mode='manual'.
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Papel", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 4.0,
+            unit_cost: 8.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: Some(0.25),
+            loss_mode: Some("manual".to_string()),
+        }];
+        do_purchase_work(&conn, 0.0, &items).unwrap();
+
+        let (loss, mode): (f64, String) = conn
+            .query_row(
+                r#"SELECT CAST(expected_loss_rate AS DOUBLE), loss_mode FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!((loss - 0.25).abs() < 1e-9, "expected 0.25, got {}", loss);
+        assert_eq!(mode, "manual");
+    }
+
+    #[test]
+    fn purchase_rejects_invalid_loss_mode() {
+        // Scenario: loss_mode inválido é rejeitado.
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Tinta", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 2.0,
+            unit_cost: 5.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: None,
+            loss_mode: Some("automatico".to_string()),
+        }];
+        let result = do_purchase_work(&conn, 0.0, &items);
+        assert!(result.is_err(), "invalid loss_mode should be rejected");
     }
 
     #[test]

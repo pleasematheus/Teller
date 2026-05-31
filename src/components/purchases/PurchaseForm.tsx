@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import type { Product } from "@/types/product"
+import type { Product, PurchaseItemPayload } from "@/types/product"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -19,6 +19,7 @@ type ItemState = {
   unitQty: string
   showConversion: boolean
   lossRatePct: string
+  lossMode: "auto" | "manual"
 }
 
 const newItem = (): ItemState => ({
@@ -30,6 +31,7 @@ const newItem = (): ItemState => ({
   unitQty: "",
   showConversion: false,
   lossRatePct: "0",
+  lossMode: "auto",
 })
 
 function stockQty(item: ItemState): number {
@@ -65,7 +67,7 @@ export function PurchaseForm({ onSaved }: Props) {
     e.preventDefault()
     setError(null)
 
-    const parsed = items.map((i) => {
+    const parsed = items.map((i): PurchaseItemPayload | null => {
       const qty = parseFloat(i.quantity)
       const cost = parseFloat(i.unitCost)
       if (!i.productId || !qty || qty <= 0 || !cost || cost < 0) return null
@@ -76,7 +78,9 @@ export function PurchaseForm({ onSaved }: Props) {
         unit_cost: cost,
         box_qty: i.showConversion && i.boxQty ? parseFloat(i.boxQty) : null,
         unit_qty: i.showConversion && i.unitQty ? parseFloat(i.unitQty) : null,
-        loss_rate: isNaN(lossRate) ? null : lossRate / 100,
+        // Auto: backend congela a taxa medida (loss_rate null). Manual: usa o override.
+        loss_rate: i.lossMode === "manual" && !isNaN(lossRate) ? lossRate / 100 : null,
+        loss_mode: i.lossMode,
       }
     })
 
@@ -200,16 +204,38 @@ export function PurchaseForm({ onSaved }: Props) {
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-teller-muted">Perda (%)</label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={99}
-                  step="0.01"
-                  value={item.lossRatePct}
-                  onChange={(e) => update(item.id, { lossRatePct: e.target.value })}
-                  placeholder="0"
-                  className="w-20"
-                />
+                <div className="flex gap-2 text-xs mb-1">
+                  <button
+                    type="button"
+                    onClick={() => update(item.id, { lossMode: "auto" })}
+                    className={item.lossMode === "auto" ? "text-teller-accent font-medium" : "text-teller-muted hover:text-teller-text"}
+                  >
+                    Auto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => update(item.id, { lossMode: "manual" })}
+                    className={item.lossMode === "manual" ? "text-teller-accent font-medium" : "text-teller-muted hover:text-teller-text"}
+                  >
+                    Manual
+                  </button>
+                </div>
+                {item.lossMode === "auto" ? (
+                  <div className="flex h-10 w-20 items-center rounded-md border border-teller-border bg-teller-card px-2 text-sm text-teller-muted">
+                    {item.lossRatePct || "0"}%
+                  </div>
+                ) : (
+                  <Input
+                    type="number"
+                    min={0}
+                    max={99}
+                    step="0.01"
+                    value={item.lossRatePct}
+                    onChange={(e) => update(item.id, { lossRatePct: e.target.value })}
+                    placeholder="0"
+                    className="w-20"
+                  />
+                )}
               </div>
             </div>
 
