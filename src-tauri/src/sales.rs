@@ -383,9 +383,9 @@ pub fn do_close_sale_work(
 
                 conn.execute(
                     r#"INSERT INTO "Stock_Movements"
-                       (product_id, quantity, movement_type, motive, created_at)
-                       VALUES (?, ?, 'out', 'venda', CURRENT_TIMESTAMP)"#,
-                    params![product_id, quantity as f64],
+                       (product_id, quantity, movement_type, motive, created_at, sale_id)
+                       VALUES (?, ?, 'out', 'venda', CURRENT_TIMESTAMP, ?)"#,
+                    params![product_id, quantity as f64, sale_id],
                 )
                 .map_err(|e| e.to_string())?;
             } else {
@@ -401,9 +401,9 @@ pub fn do_close_sale_work(
 
                     conn.execute(
                         r#"INSERT INTO "Stock_Movements"
-                           (product_id, quantity, movement_type, motive, created_at)
-                           VALUES (?, ?, 'out', 'venda', CURRENT_TIMESTAMP)"#,
-                        params![child_id, qty_to_consume],
+                           (product_id, quantity, movement_type, motive, created_at, sale_id)
+                           VALUES (?, ?, 'out', 'venda', CURRENT_TIMESTAMP, ?)"#,
+                        params![child_id, qty_to_consume, sale_id],
                     )
                     .map_err(|e| e.to_string())?;
 
@@ -723,6 +723,90 @@ mod tests {
             |r| r.get(0),
         ).unwrap();
         assert_eq!(input_count, 1);
+    }
+
+    #[test]
+    fn close_sale_records_sale_id_on_direct_stock_movement() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Caneca", true);
+
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 10.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![product_id],
+        ).unwrap();
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 20.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 2, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let items = vec![SaleItemInput { product_id, quantity: 2, discount: 0.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 20.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let movement_sale_id: Option<i64> = conn.query_row(
+            r#"SELECT sale_id FROM "Stock_Movements"
+               WHERE product_id = ? AND movement_type = 'out' AND motive = 'venda'"#,
+            params![product_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(movement_sale_id, Some(sale_id), "Baixa direta deve gravar o sale_id da venda");
+    }
+
+    #[test]
+    fn close_sale_records_sale_id_on_component_stock_movements() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let foto_id = insert_product(&conn, "Foto 10x15", true);
+        let papel_id = insert_product(&conn, "Papel", false);
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 100.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![papel_id],
+        ).unwrap();
+        add_product_component_in_test(&conn, foto_id, papel_id, 2);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 30.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 3, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, foto_id],
+        ).unwrap();
+
+        let items = vec![SaleItemInput { product_id: foto_id, quantity: 3, discount: 0.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 30.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let (total, matching): (i64, i64) = conn.query_row(
+            r#"SELECT COUNT(*), COUNT(*) FILTER (WHERE sale_id = ?)
+               FROM "Stock_Movements"
+               WHERE product_id = ? AND movement_type = 'out' AND motive = 'venda'"#,
+            params![sale_id, papel_id], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert!(total >= 1, "Deve haver ao menos uma baixa de insumo");
+        assert_eq!(total, matching, "Todas as baixas de insumo via BOM devem gravar o sale_id da venda");
     }
 
     #[test]

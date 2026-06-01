@@ -87,6 +87,7 @@ export function MovementHistory() {
                 <th className="px-4 py-2 text-left text-teller-muted font-medium">Data</th>
                 <th className="px-4 py-2 text-left text-teller-muted font-medium">Tipo</th>
                 <th className="px-4 py-2 text-left text-teller-muted font-medium">Motivo</th>
+                <th className="px-4 py-2 text-left text-teller-muted font-medium">Venda</th>
                 <th className="px-4 py-2 text-right text-teller-muted font-medium">
                   Quantidade
                 </th>
@@ -112,6 +113,9 @@ export function MovementHistory() {
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-teller-text capitalize">{m.motive}</td>
+                  <td className="px-4 py-2.5 text-teller-muted">
+                    {m.sale_id != null ? `#${m.sale_id}` : ""}
+                  </td>
                   <td className="px-4 py-2.5 text-right font-medium text-teller-text">
                     {fmtQty(m.quantity)}
                   </td>
