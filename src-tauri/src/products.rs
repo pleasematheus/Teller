@@ -46,6 +46,32 @@ pub fn validate_loss_mode(loss_mode: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn validate_unit(conn: &Connection, unit: &str, require_active: bool) -> Result<(), String> {
+    let count: i64 = if require_active {
+        conn.query_row(
+            r#"SELECT COUNT(*) FROM "Units_Of_Measure" WHERE name = ? AND active = true"#,
+            params![unit],
+            |r| r.get(0),
+        )
+    } else {
+        conn.query_row(
+            r#"SELECT COUNT(*) FROM "Units_Of_Measure" WHERE name = ?"#,
+            params![unit],
+            |r| r.get(0),
+        )
+    }
+    .map_err(|e| e.to_string())?;
+
+    if count == 0 {
+        return Err(if require_active {
+            format!("Unidade '{}' não existe ou está inativa", unit)
+        } else {
+            format!("Unidade '{}' não existe", unit)
+        });
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
@@ -286,6 +312,7 @@ pub fn create_product(
     validate_product(&name, 0.0)?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
+    validate_unit(&conn, &unit, true)?;
     conn.execute(
         r#"INSERT INTO "Products"
            (name, description, active, sellable, cost_price, markup, final_price,
@@ -318,6 +345,7 @@ pub fn update_product(
     validate_product(&name, 0.0)?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
+    validate_unit(&conn, &unit, false)?;
 
     let rows_affected = conn
         .execute(
@@ -424,6 +452,46 @@ mod tests {
             .unwrap();
         assert_eq!(auto_mode, "auto");
         assert_eq!(default_mode, "manual");
+    }
+
+    // Task 4.6 tests
+
+    #[test]
+    fn validate_unit_rejects_nonexistent_unit() {
+        let conn = test_db();
+        assert!(validate_unit(&conn, "kg", true).is_err());
+        assert!(validate_unit(&conn, "kg", false).is_err());
+    }
+
+    #[test]
+    fn validate_unit_for_create_rejects_inactive() {
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
+               VALUES ('kg', 'kg', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+        assert!(validate_unit(&conn, "kg", true).is_err());
+    }
+
+    #[test]
+    fn validate_unit_for_update_accepts_inactive() {
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
+               VALUES ('kg', 'kg', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+        assert!(validate_unit(&conn, "kg", false).is_ok());
+    }
+
+    #[test]
+    fn validate_unit_accepts_active_unit() {
+        let conn = test_db();
+        use crate::settings::insert_unit_of_measure;
+        insert_unit_of_measure(&conn, "kg", "kg");
+        assert!(validate_unit(&conn, "kg", true).is_ok());
+        assert!(validate_unit(&conn, "kg", false).is_ok());
     }
 
     #[test]

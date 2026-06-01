@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS "Products" (
     "final_price"        DOUBLE        NOT NULL,
     "expected_loss_rate" DOUBLE        NOT NULL DEFAULT 0,
     "sellable"           BOOLEAN       NOT NULL DEFAULT TRUE,
-    "unit"               VARCHAR       NOT NULL DEFAULT 'unidade' CHECK (unit IN ('unidade','rolo','bobina','ml','folha')),
+    "unit"               VARCHAR       NOT NULL DEFAULT 'unidade',
     "profit_margin"      DOUBLE        NOT NULL DEFAULT 0,
     "loss_mode"          VARCHAR       NOT NULL DEFAULT 'manual' CHECK (loss_mode IN ('manual','auto')),
     "updated_at"         TIMESTAMP     NOT NULL,
@@ -227,6 +227,16 @@ CREATE TABLE IF NOT EXISTS "Production_Inputs" (
     "created_at"          TIMESTAMP     NOT NULL,
     FOREIGN KEY ("production_order_id") REFERENCES "Production_Orders" ("id"),
     FOREIGN KEY ("product_id")          REFERENCES "Products"          ("id")
+);
+
+CREATE SEQUENCE IF NOT EXISTS units_of_measure_id_seq START 1;
+CREATE TABLE IF NOT EXISTS "Units_Of_Measure" (
+    "id"           INTEGER   DEFAULT nextval('units_of_measure_id_seq') PRIMARY KEY,
+    "name"         VARCHAR   NOT NULL UNIQUE,
+    "abbreviation" VARCHAR   NOT NULL,
+    "active"       BOOLEAN   NOT NULL DEFAULT TRUE,
+    "updated_at"   TIMESTAMP NOT NULL,
+    "created_at"   TIMESTAMP NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS "User_Settings" (

@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { computePrice, computeMarginFromPrice, computeCmvFromComponents } from "@/lib/pricing"
 import type { Product, PricingRates } from "@/types/product"
 import type { ProductComponent } from "@/types/stock"
+import type { UnitOfMeasure } from "@/types/units"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 const pct = new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 2 })
@@ -35,6 +36,8 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
   const [noMarginHistory, setNoMarginHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  const [units, setUnits] = useState<UnitOfMeasure[]>([])
 
   const [components, setComponents] = useState<ProductComponent[]>([])
   const [allInsumos, setAllInsumos] = useState<Product[]>([])
@@ -123,6 +126,21 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product])
+
+  useEffect(() => {
+    invoke<UnitOfMeasure[]>("list_units_of_measure").then((loaded) => {
+      setUnits(loaded);
+      // For new products, auto-select the first active unit so the controlled
+      // select value matches what is visible. Without this, `unit` stays as
+      // the default "unidade" string which is not in the DB, and the backend
+      // rejects the creation even though the user sees a valid option selected.
+      if (!product) {
+        const first = loaded.find((u) => u.active);
+        if (first) setUnit(first.name);
+      }
+    }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleSellableChange = (val: boolean) => {
     setSellable(val)
@@ -257,11 +275,18 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
             onChange={(e) => setUnit(e.target.value)}
             className="flex h-10 w-full rounded-md border border-teller-border bg-teller-card px-3 py-2 text-sm text-teller-text focus:outline-none focus:ring-2 focus:ring-teller-accent"
           >
-            <option value="unidade">Unidade</option>
-            <option value="rolo">Rolo</option>
-            <option value="bobina">Bobina</option>
-            <option value="ml">ML</option>
-            <option value="folha">Folha</option>
+            {units.length === 0 && (
+              <option value={unit}>{unit}</option>
+            )}
+            {units.map((u) => {
+              // In edit mode, keep the current unit selectable even if inactive.
+              if (!u.active && u.name !== unit) return null;
+              return (
+                <option key={u.id} value={u.name}>
+                  {u.name} ({u.abbreviation})
+                </option>
+              );
+            })}
           </select>
         </div>
 

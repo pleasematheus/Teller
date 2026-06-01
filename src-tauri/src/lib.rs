@@ -81,6 +81,11 @@ pub fn run() {
             settings::delete_payment_method,
             settings::list_transaction_fees,
             settings::upsert_transaction_fee,
+            settings::list_units_of_measure,
+            settings::create_unit_of_measure,
+            settings::rename_unit_of_measure,
+            settings::update_unit_of_measure,
+            settings::delete_unit_of_measure,
             reports::get_dre,
         ])
         .build(tauri::generate_context!())
