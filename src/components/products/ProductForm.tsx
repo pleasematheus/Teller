@@ -31,7 +31,6 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
   const [active, setActive] = useState(product?.active ?? true)
   const [sellable, setSellable] = useState(product?.sellable ?? true)
   const [unit, setUnit] = useState(product?.unit ?? "unidade")
-  const [costPrice, setCostPrice] = useState(product ? String(product.cost_price) : "")
   const [finalPrice, setFinalPrice] = useState(product ? String(product.final_price) : "")
   const [noMarginHistory, setNoMarginHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -63,10 +62,10 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
     return computeCmvFromComponents(resolved as { cost_price: number; expected_loss_rate: number; quantity: number }[])
   }, [components, allInsumos, hasComponents])
 
-  // For products with components, cost is derived. For others, use the manual cost input.
+  // For products with components, cost is derived. For others, use the purchase-frozen cost.
   const parsedCost = hasComponents && derivedCmv !== null
     ? derivedCmv
-    : parseFloat(costPrice) || 0
+    : product?.cost_price ?? 0
 
   // CMV for the price floor input
   const currentCmv = hasComponents && derivedCmv !== null
@@ -190,7 +189,6 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
       active,
       sellable,
       unit,
-      costPrice: parsedCost,
       markup: breakdown.markup_percent,
       finalPrice: parsedFinalPrice,
       profitMargin: breakdown.profit_margin,
@@ -279,25 +277,23 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
           </div>
         )}
 
-        {/* Cost */}
+        {/* Cost — read-only; set by purchase for supplies, derived for composites */}
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="cost">Custo (R$) *</Label>
+          <Label>Custo (R$)</Label>
           {hasComponents ? (
             <div className="flex h-10 w-full items-center rounded-md border border-teller-border bg-teller-card px-3 text-sm text-teller-muted">
               {derivedCmv !== null
                 ? brl.format(derivedCmv)
                 : "Custo indefinido (componente com perda 100%)"}
             </div>
+          ) : isEdit ? (
+            <div className="flex h-10 w-full items-center rounded-md border border-teller-border bg-teller-card px-3 text-sm text-teller-muted">
+              {brl.format(product!.cost_price)}
+            </div>
           ) : (
-            <Input
-              id="cost"
-              type="number"
-              min={0}
-              step="0.01"
-              value={costPrice}
-              onChange={(e) => setCostPrice(e.target.value)}
-              placeholder="0,00"
-            />
+            <div className="flex h-10 w-full items-center rounded-md border border-teller-border bg-teller-card px-3 text-sm text-teller-muted">
+              Definido pelas compras do insumo
+            </div>
           )}
         </div>
 
