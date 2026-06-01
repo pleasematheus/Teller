@@ -5,7 +5,7 @@ const SCHEMA: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/d
 
 // Versão do schema do banco. Incrementar manualmente quando schema.sql mudar de
 // forma incompatível. Consumida pela ferramenta de atualização dedicada via App_Meta.
-const DB_VERSION: &str = "1";
+const DB_VERSION: &str = "2";
 
 pub fn open_database(path: &std::path::Path) -> Result<Connection, duckdb::Error> {
     match Connection::open(path) {

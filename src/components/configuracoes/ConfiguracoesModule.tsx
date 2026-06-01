@@ -7,8 +7,9 @@ import { type AuthUser } from "@/App";
 import { EmpresaSection } from "./EmpresaSection";
 import { PagamentosSection } from "./PagamentosSection";
 import { UsuariosSection } from "./UsuariosSection";
+import { UnidadesSection } from "./UnidadesSection";
 
-type Section = "empresa" | "pagamentos" | "usuarios";
+type Section = "empresa" | "pagamentos" | "usuarios" | "unidades";
 
 type Props = {
   user: AuthUser;
@@ -19,6 +20,7 @@ type Props = {
 const NAV_ITEMS: { id: Section; label: string }[] = [
   { id: "empresa", label: "Empresa" },
   { id: "pagamentos", label: "Formas de Pagamento" },
+  { id: "unidades", label: "Unidades de Medida" },
   { id: "usuarios", label: "Usuários" },
 ];
 
@@ -77,6 +79,7 @@ export function ConfiguracoesModule({ user, theme, onThemeChange }: Props) {
       <main className="flex flex-1 flex-col min-h-0 overflow-y-auto p-6">
         {section === "empresa" && <EmpresaSection />}
         {section === "pagamentos" && <PagamentosSection />}
+        {section === "unidades" && <UnidadesSection />}
         {section === "usuarios" && <UsuariosSection user={user} />}
       </main>
     </div>

@@ -31,6 +31,14 @@ pub struct PaymentMethod {
 }
 
 #[derive(Serialize)]
+pub struct UnitOfMeasure {
+    pub id: i64,
+    pub name: String,
+    pub abbreviation: String,
+    pub active: bool,
+}
+
+#[derive(Serialize)]
 pub struct UserInfo {
     pub id: i64,
     pub name: String,
@@ -403,6 +411,175 @@ pub fn upsert_transaction_fee(
     Ok(())
 }
 
+#[tauri::command]
+pub fn list_units_of_measure(state: State<DbState>) -> Result<Vec<UnitOfMeasure>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(r#"
+            SELECT id, name, abbreviation, active
+            FROM "Units_Of_Measure"
+            ORDER BY active DESC, name
+        "#)
+        .map_err(|e| e.to_string())?;
+    let units = stmt
+        .query_map([], |row| {
+            Ok(UnitOfMeasure {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                abbreviation: row.get(2)?,
+                active: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(units)
+}
+
+#[tauri::command]
+pub fn create_unit_of_measure(
+    name: String,
+    abbreviation: String,
+    state: State<DbState>,
+) -> Result<(), String> {
+    let name = name.trim().to_string();
+    let abbreviation = abbreviation.trim().to_string();
+    if name.is_empty() {
+        return Err("Nome é obrigatório".to_string());
+    }
+    if abbreviation.is_empty() {
+        return Err("Sigla é obrigatória".to_string());
+    }
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
+           VALUES (?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+        params![name, abbreviation],
+    )
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("Constraint Error") || msg.contains("unique") || msg.contains("Duplicate") {
+            format!("Já existe uma unidade de medida com o nome '{}'", name)
+        } else {
+            msg
+        }
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn rename_unit_of_measure(
+    id: i64,
+    name: String,
+    abbreviation: String,
+    state: State<DbState>,
+) -> Result<(), String> {
+    let name = name.trim().to_string();
+    let abbreviation = abbreviation.trim().to_string();
+    if name.is_empty() {
+        return Err("Nome é obrigatório".to_string());
+    }
+    if abbreviation.is_empty() {
+        return Err("Sigla é obrigatória".to_string());
+    }
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let old_name: String = conn
+        .query_row(
+            r#"SELECT name FROM "Units_Of_Measure" WHERE id = ?"#,
+            params![id],
+            |r| r.get(0),
+        )
+        .map_err(|_| format!("Unidade {} não encontrada", id))?;
+
+    conn.execute("BEGIN", []).map_err(|e| e.to_string())?;
+
+    let result: Result<(), String> = (|| {
+        let rows = conn
+            .execute(
+                r#"UPDATE "Units_Of_Measure"
+                   SET name = ?, abbreviation = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ?"#,
+                params![name, abbreviation, id],
+            )
+            .map_err(|e| e.to_string())?;
+        if rows == 0 {
+            return Err(format!("Unidade {} não encontrada", id));
+        }
+        if name != old_name {
+            conn.execute(
+                r#"UPDATE "Products" SET unit = ?, updated_at = CURRENT_TIMESTAMP WHERE unit = ?"#,
+                params![name, old_name],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })();
+
+    if result.is_ok() {
+        conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+    } else {
+        let _ = conn.execute("ROLLBACK", []);
+    }
+    result
+}
+
+#[tauri::command]
+pub fn update_unit_of_measure(
+    id: i64,
+    active: bool,
+    state: State<DbState>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let rows = conn
+        .execute(
+            r#"UPDATE "Units_Of_Measure" SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![active, id],
+        )
+        .map_err(|e| e.to_string())?;
+    if rows == 0 {
+        return Err(format!("Unidade {} não encontrada", id));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_unit_of_measure(id: i64, state: State<DbState>) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let name: String = conn
+        .query_row(
+            r#"SELECT name FROM "Units_Of_Measure" WHERE id = ?"#,
+            params![id],
+            |r| r.get(0),
+        )
+        .map_err(|_| format!("Unidade {} não encontrada", id))?;
+
+    let linked: i64 = conn
+        .query_row(
+            r#"SELECT COUNT(*) FROM "Products" WHERE unit = ?"#,
+            params![name],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if linked > 0 {
+        return Err(format!(
+            "Esta unidade não pode ser excluída pois está em uso por {} produto(s)",
+            linked
+        ));
+    }
+
+    let rows = conn
+        .execute(r#"DELETE FROM "Units_Of_Measure" WHERE id = ?"#, params![id])
+        .map_err(|e| e.to_string())?;
+
+    if rows == 0 {
+        return Err(format!("Unidade {} não encontrada", id));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn insert_payment_method(conn: &duckdb::Connection, name: &str) -> i64 {
     conn.query_row(
@@ -432,6 +609,17 @@ fn insert_business_settings_full(conn: &duckdb::Connection, name: &str, inv: f64
            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
         params![name, inv, margin],
     ).unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn insert_unit_of_measure(conn: &duckdb::Connection, name: &str, abbreviation: &str) -> i64 {
+    conn.query_row(
+        r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
+           VALUES (?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           RETURNING id"#,
+        params![name, abbreviation],
+        |r| r.get(0),
+    ).unwrap()
 }
 
 #[cfg(test)]
@@ -736,6 +924,152 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    // Task 4.1 / 4.2 tests
+
+    #[test]
+    fn create_unit_of_measure_rejects_empty_name() {
+        let name = "  ".trim().to_string();
+        assert!(name.is_empty());
+    }
+
+    #[test]
+    fn create_unit_of_measure_rejects_empty_abbreviation() {
+        let abbr = "  ".trim().to_string();
+        assert!(abbr.is_empty());
+    }
+
+    #[test]
+    fn create_unit_of_measure_inserts_with_active_true() {
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
+               VALUES ('kg', 'kg', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+        let active: bool = conn.query_row(
+            r#"SELECT active FROM "Units_Of_Measure" WHERE name = 'kg'"#,
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(active);
+    }
+
+    #[test]
+    fn create_unit_of_measure_rejects_duplicate_name() {
+        let conn = test_db();
+        insert_unit_of_measure(&conn, "kg", "kg");
+        let result = conn.execute(
+            r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
+               VALUES ('kg', 'kilo', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        );
+        assert!(result.is_err(), "duplicate name should violate UNIQUE constraint");
+    }
+
+    // Task 4.3 test
+
+    #[test]
+    fn rename_unit_of_measure_propagates_to_products() {
+        let conn = test_db();
+        let uid = insert_unit_of_measure(&conn, "Unidade", "un");
+        conn.execute(
+            r#"INSERT INTO "Products" (name, active, sellable, markup, cost_price, final_price,
+               expected_loss_rate, unit, updated_at, created_at)
+               VALUES ('Produto Teste', true, true, 1.5, 10.0, 15.0, 0.0, 'Unidade',
+               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+
+        conn.execute("BEGIN", []).unwrap();
+        conn.execute(
+            r#"UPDATE "Units_Of_Measure" SET name = 'Unidade Nova', updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![uid],
+        ).unwrap();
+        conn.execute(
+            r#"UPDATE "Products" SET unit = 'Unidade Nova', updated_at = CURRENT_TIMESTAMP WHERE unit = 'Unidade'"#,
+            [],
+        ).unwrap();
+        conn.execute("COMMIT", []).unwrap();
+
+        let unit: String = conn.query_row(
+            r#"SELECT unit FROM "Products" WHERE name = 'Produto Teste'"#,
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(unit, "Unidade Nova");
+
+        let new_name: String = conn.query_row(
+            r#"SELECT name FROM "Units_Of_Measure" WHERE id = ?"#,
+            params![uid],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(new_name, "Unidade Nova");
+    }
+
+    // Task 4.4 test
+
+    #[test]
+    fn update_unit_of_measure_toggles_active() {
+        let conn = test_db();
+        let uid = insert_unit_of_measure(&conn, "kg", "kg");
+        conn.execute(
+            r#"UPDATE "Units_Of_Measure" SET active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![uid],
+        ).unwrap();
+        let active: bool = conn.query_row(
+            r#"SELECT active FROM "Units_Of_Measure" WHERE id = ?"#,
+            params![uid],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(!active);
+    }
+
+    // Task 4.5 tests
+
+    #[test]
+    fn delete_unit_of_measure_removes_unused() {
+        let conn = test_db();
+        let uid = insert_unit_of_measure(&conn, "kg", "kg");
+        let linked: i64 = conn.query_row(
+            r#"SELECT COUNT(*) FROM "Products" WHERE unit = 'kg'"#,
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(linked, 0);
+        conn.execute(r#"DELETE FROM "Units_Of_Measure" WHERE id = ?"#, params![uid]).unwrap();
+        let count: i64 = conn.query_row(
+            r#"SELECT COUNT(*) FROM "Units_Of_Measure" WHERE id = ?"#,
+            params![uid],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn delete_unit_of_measure_blocked_when_in_use() {
+        let conn = test_db();
+        let uid = insert_unit_of_measure(&conn, "kg", "kg");
+        conn.execute(
+            r#"INSERT INTO "Products" (name, active, sellable, markup, cost_price, final_price,
+               expected_loss_rate, unit, updated_at, created_at)
+               VALUES ('Produto', true, true, 1.5, 10.0, 15.0, 0.0, 'kg',
+               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+
+        let name: String = conn.query_row(
+            r#"SELECT name FROM "Units_Of_Measure" WHERE id = ?"#,
+            params![uid],
+            |r| r.get(0),
+        ).unwrap();
+        let linked: i64 = conn.query_row(
+            r#"SELECT COUNT(*) FROM "Products" WHERE unit = ?"#,
+            params![name],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(linked > 0, "should have linked products preventing deletion");
     }
 
     #[test]
