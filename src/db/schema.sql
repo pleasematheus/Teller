@@ -74,28 +74,6 @@ CREATE TABLE IF NOT EXISTS "Product_Taxes" (
     FOREIGN KEY ("tax_id")     REFERENCES "Taxes"    ("id")
 );
 
-CREATE SEQUENCE IF NOT EXISTS stock_movements_id_seq START 1;
-CREATE TABLE IF NOT EXISTS "Stock_Movements" (
-    "id"            INTEGER       DEFAULT nextval('stock_movements_id_seq') PRIMARY KEY,
-    "product_id"    INTEGER       NOT NULL,
-    "quantity"      DECIMAL(10,4) NOT NULL,
-    "movement_type" VARCHAR       NOT NULL,
-    "motive"        VARCHAR       NOT NULL,
-    "created_at"    TIMESTAMP     NOT NULL,
-    FOREIGN KEY ("product_id") REFERENCES "Products" ("id")
-);
-
-CREATE VIEW IF NOT EXISTS "Stock" AS
-    SELECT
-        product_id,
-        SUM(CASE
-            WHEN movement_type = 'in'  THEN quantity
-            WHEN movement_type = 'out' THEN -quantity
-            ELSE 0
-        END) AS current_quantity
-    FROM "Stock_Movements"
-    GROUP BY product_id;
-
 CREATE SEQUENCE IF NOT EXISTS purchases_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Purchases" (
     "id"         INTEGER       DEFAULT nextval('purchases_id_seq') PRIMARY KEY,
@@ -131,6 +109,30 @@ CREATE TABLE IF NOT EXISTS "Sales" (
     "created_at"  TIMESTAMP     NOT NULL,
     FOREIGN KEY ("user_id") REFERENCES "Users" ("id")
 );
+
+CREATE SEQUENCE IF NOT EXISTS stock_movements_id_seq START 1;
+CREATE TABLE IF NOT EXISTS "Stock_Movements" (
+    "id"            INTEGER       DEFAULT nextval('stock_movements_id_seq') PRIMARY KEY,
+    "product_id"    INTEGER       NOT NULL,
+    "quantity"      DECIMAL(10,4) NOT NULL,
+    "movement_type" VARCHAR       NOT NULL,
+    "motive"        VARCHAR       NOT NULL,
+    "created_at"    TIMESTAMP     NOT NULL,
+    "sale_id"       INTEGER,
+    FOREIGN KEY ("product_id") REFERENCES "Products" ("id"),
+    FOREIGN KEY ("sale_id")    REFERENCES "Sales"    ("id")
+);
+
+CREATE VIEW IF NOT EXISTS "Stock" AS
+    SELECT
+        product_id,
+        SUM(CASE
+            WHEN movement_type = 'in'  THEN quantity
+            WHEN movement_type = 'out' THEN -quantity
+            ELSE 0
+        END) AS current_quantity
+    FROM "Stock_Movements"
+    GROUP BY product_id;
 
 CREATE SEQUENCE IF NOT EXISTS sales_products_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Sales_Products" (

@@ -31,6 +31,7 @@ pub struct StockMovement {
     pub movement_type: String,
     pub motive: String,
     pub created_at: String,
+    pub sale_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -217,7 +218,7 @@ pub fn list_stock_movements(
     let mut stmt = conn
         .prepare(r#"
             SELECT id, quantity, movement_type, motive,
-                   CAST(created_at AS VARCHAR)
+                   CAST(created_at AS VARCHAR), sale_id
             FROM "Stock_Movements"
             WHERE product_id = ?
             ORDER BY created_at DESC
@@ -232,6 +233,7 @@ pub fn list_stock_movements(
                 movement_type: row.get(2)?,
                 motive: row.get(3)?,
                 created_at: row.get(4)?,
+                sale_id: row.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -778,6 +780,71 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn list_stock_movements_returns_sale_id_for_venda_and_none_otherwise() {
+        let conn = test_db();
+        let id = insert_product(&conn, "Papel", false);
+
+        let user_id: i64 = conn
+            .query_row(
+                r#"INSERT INTO "Users" (name, password_hash, nickname, active, updated_at, created_at)
+                   VALUES ('u', 'h', 'u', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                   RETURNING id"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let sale_id: i64 = conn
+            .query_row(
+                r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+                   VALUES (?, '', 'closed', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                   RETURNING id"#,
+                params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 10.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![id],
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at, sale_id)
+               VALUES (?, 2.0, 'out', 'venda', CURRENT_TIMESTAMP, ?)"#,
+            params![id, sale_id],
+        ).unwrap();
+
+        let mut stmt = conn
+            .prepare(r#"
+                SELECT id, quantity, movement_type, motive,
+                       CAST(created_at AS VARCHAR), sale_id
+                FROM "Stock_Movements"
+                WHERE product_id = ?
+                ORDER BY created_at DESC
+            "#)
+            .unwrap();
+        let movements: Vec<StockMovement> = stmt
+            .query_map(params![id], |row| {
+                Ok(StockMovement {
+                    id: row.get(0)?,
+                    quantity: row.get(1)?,
+                    movement_type: row.get(2)?,
+                    motive: row.get(3)?,
+                    created_at: row.get(4)?,
+                    sale_id: row.get(5)?,
+                })
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let venda = movements.iter().find(|m| m.motive == "venda").unwrap();
+        assert_eq!(venda.sale_id, Some(sale_id), "Movimentação de venda deve trazer o sale_id");
+        let compra = movements.iter().find(|m| m.motive == "compra").unwrap();
+        assert_eq!(compra.sale_id, None, "Movimentação de compra deve ter sale_id nulo");
     }
 
     #[test]

@@ -11,6 +11,7 @@ export interface StockMovement {
   movement_type: string
   motive: string
   created_at: string
+  sale_id: number | null
 }
 
 export interface ProductComponent {

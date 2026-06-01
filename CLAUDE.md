@@ -29,6 +29,7 @@
 - Use the #### Scenario: blocks from OpenSpec specs as test case references.
 - Manual tests must be included as tasks and delegated to human testers, not automated.
 - Changes to the DuckDB database must include tasks for deleting the old version and creating the new one.
+- Spawn a subagent to run tests and report results back to the main agent.
 
 ## Stack
 - Frontend: React 19, TypeScript, Tailwind 4, shadcn/ui, Vitest
