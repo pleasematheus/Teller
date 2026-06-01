@@ -29,12 +29,9 @@ pub struct Product {
     pub loss_mode: String,
 }
 
-pub fn validate_product(name: &str, cost_price: f64, expected_loss_rate: f64) -> Result<(), String> {
+pub fn validate_product(name: &str, expected_loss_rate: f64) -> Result<(), String> {
     if name.is_empty() {
         return Err("Nome é obrigatório".to_string());
-    }
-    if cost_price < 0.0 {
-        return Err("Custo não pode ser negativo".to_string());
     }
     if !(0.0..1.0).contains(&expected_loss_rate) {
         return Err("Taxa de perda deve estar entre 0% e 99%".to_string());
@@ -277,7 +274,6 @@ pub fn create_product(
     description: Option<String>,
     active: bool,
     sellable: bool,
-    cost_price: f64,
     markup: f64,
     final_price: f64,
     unit: String,
@@ -285,17 +281,17 @@ pub fn create_product(
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
-    // A loss rate e o modo são propriedade da compra; produto novo nasce com
-    // expected_loss_rate = 0 e loss_mode no default da coluna ('manual').
-    validate_product(&name, cost_price, 0.0)?;
+    // cost_price starts at 0; the purchase event is the sole source of cost.
+    // expected_loss_rate and loss_mode are also owned by the purchase, not this form.
+    validate_product(&name, 0.0)?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
         r#"INSERT INTO "Products"
            (name, description, active, sellable, cost_price, markup, final_price,
             expected_loss_rate, unit, profit_margin, updated_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-        params![name, description, active, sellable, cost_price, markup, final_price,
+           VALUES (?, ?, ?, ?, 0.0, ?, ?, 0.0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+        params![name, description, active, sellable, markup, final_price,
                 unit, profit_margin],
     )
     .map_err(|e| e.to_string())?;
@@ -310,7 +306,6 @@ pub fn update_product(
     description: Option<String>,
     active: bool,
     sellable: bool,
-    cost_price: f64,
     markup: f64,
     final_price: f64,
     unit: String,
@@ -318,9 +313,9 @@ pub fn update_product(
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
-    // expected_loss_rate e loss_mode são fixados pela compra, não pela edição do
-    // produto; ficam fora do UPDATE para não sobrescrever a perda já congelada.
-    validate_product(&name, cost_price, 0.0)?;
+    // cost_price, expected_loss_rate and loss_mode are owned by the purchase event;
+    // none of them appear in the SET clause to avoid overwriting purchase-frozen values.
+    validate_product(&name, 0.0)?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
@@ -328,10 +323,10 @@ pub fn update_product(
         .execute(
             r#"UPDATE "Products"
                SET name = ?, description = ?, active = ?, sellable = ?,
-                   cost_price = ?, markup = ?, final_price = ?,
+                   markup = ?, final_price = ?,
                    unit = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
-            params![name, description, active, sellable, cost_price, markup, final_price,
+            params![name, description, active, sellable, markup, final_price,
                     unit, profit_margin, id],
         )
         .map_err(|e| e.to_string())?;
@@ -433,34 +428,83 @@ mod tests {
 
     #[test]
     fn validate_product_rejects_empty_name() {
-        assert!(validate_product("", 10.0, 0.0).is_err());
-        assert!(validate_product("  ".trim(), 10.0, 0.0).is_err());
-    }
-
-    #[test]
-    fn validate_product_rejects_negative_cost() {
-        assert!(validate_product("Produto", -0.01, 0.0).is_err());
+        assert!(validate_product("", 0.0).is_err());
+        assert!(validate_product("  ".trim(), 0.0).is_err());
     }
 
     #[test]
     fn validate_product_rejects_loss_rate_of_one() {
-        assert!(validate_product("Produto", 10.0, 1.0).is_err());
+        assert!(validate_product("Produto", 1.0).is_err());
     }
 
     #[test]
     fn validate_product_rejects_loss_rate_above_one() {
-        assert!(validate_product("Produto", 10.0, 1.5).is_err());
+        assert!(validate_product("Produto", 1.5).is_err());
     }
 
     #[test]
     fn validate_product_rejects_negative_loss_rate() {
-        assert!(validate_product("Produto", 10.0, -0.1).is_err());
+        assert!(validate_product("Produto", -0.1).is_err());
     }
 
     #[test]
     fn validate_product_accepts_valid_data() {
-        assert!(validate_product("Bolo de Chocolate", 10.0, 0.05).is_ok());
-        assert!(validate_product("Farinha", 0.0, 0.0).is_ok());
+        assert!(validate_product("Bolo de Chocolate", 0.05).is_ok());
+        assert!(validate_product("Farinha", 0.0).is_ok());
+    }
+
+    #[test]
+    fn create_product_inserts_cost_price_zero() {
+        // Scenario "Cadastro de insumo sem custo manual": cost_price nasce em 0
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Products"
+               (name, description, active, sellable, cost_price, markup, final_price,
+                expected_loss_rate, unit, profit_margin, updated_at, created_at)
+               VALUES ('Farinha', NULL, true, false, 0.0, 1.5, 0.0, 0.0, 'unidade', 0.0,
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        )
+        .unwrap();
+        let cost: f64 = conn
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE name = 'Farinha'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cost, 0.0, "new product must start with cost_price = 0.0");
+    }
+
+    #[test]
+    fn update_product_does_not_touch_cost_price() {
+        // Scenario "Edição não altera o custo fixado": update preserves purchase-set cost
+        let conn = test_db();
+        let id = insert_product(&conn, "Insumo CP", false);
+        conn.execute(
+            r#"UPDATE "Products" SET cost_price = 5.50, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![id],
+        )
+        .unwrap();
+        // Mirror of update_product SET clause (cost_price absent)
+        conn.execute(
+            r#"UPDATE "Products"
+               SET name = ?, description = ?, active = ?, sellable = ?,
+                   markup = ?, final_price = ?,
+                   unit = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?"#,
+            params!["Insumo CP Novo", Option::<String>::None, true, false,
+                    1.5_f64, 8.25_f64, "unidade", 0.3_f64, id],
+        )
+        .unwrap();
+        let cost: f64 = conn
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((cost - 5.50).abs() < 1e-9, "update_product must not modify cost_price, got {}", cost);
     }
 
     #[test]

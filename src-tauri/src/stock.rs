@@ -130,10 +130,41 @@ pub fn do_purchase_work(
         )
         .map_err(|e| e.to_string())?;
 
+        // Read balance and cost BEFORE inserting the movement (Stock is a VIEW over Stock_Movements)
+        let saldo_ant: f64 = conn
+            .query_row(
+                r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#,
+                params![item.product_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        let custo_ant: f64 = conn
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![item.product_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
         let stock_qty = match (item.box_qty, item.unit_qty) {
             (Some(bq), Some(uq)) if bq > 0.0 => item.quantity * (uq / bq),
             _ => item.quantity,
         };
+
+        let custo_unit_lote = (item.quantity * item.unit_cost) / stock_qty;
+        let denom = saldo_ant + stock_qty;
+        let novo_custo = if denom > 0.0 {
+            (saldo_ant * custo_ant + stock_qty * custo_unit_lote) / denom
+        } else {
+            custo_unit_lote
+        };
+
+        conn.execute(
+            r#"UPDATE "Products" SET cost_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![novo_custo, item.product_id],
+        )
+        .map_err(|e| e.to_string())?;
 
         conn.execute(
             r#"INSERT INTO "Stock_Movements"
@@ -470,6 +501,132 @@ mod tests {
     use super::*;
     use crate::db::test_db;
     use crate::products::insert_product;
+
+    #[test]
+    fn purchase_first_sets_cost_to_unit_lot_cost() {
+        // Scenario "Primeira compra de um insumo sem estoque"
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Farinha", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 10.0,
+            unit_cost: 3.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: None,
+            loss_mode: None,
+        }];
+        do_purchase_work(&conn, 0.0, &items).unwrap();
+
+        let cost: f64 = conn
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        // saldo_ant=0, stock_qty=10, custo_unit_lote=3.0, novo_custo=(0+10*3)/10=3.0
+        assert!((cost - 3.0).abs() < 1e-9, "expected 3.0, got {}", cost);
+    }
+
+    #[test]
+    fn purchase_subsequent_computes_weighted_average() {
+        // Scenario "Compra subsequente com estoque existente"
+        // First: 10 units at 3.0 → cost=3.0; Second: 5 units at 5.0 → (10*3+5*5)/15 ≈ 3.667
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Bobina Extra", false);
+
+        let first = vec![PurchaseItemInput {
+            product_id,
+            quantity: 10.0,
+            unit_cost: 3.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: None,
+            loss_mode: None,
+        }];
+        do_purchase_work(&conn, 0.0, &first).unwrap();
+
+        let second = vec![PurchaseItemInput {
+            product_id,
+            quantity: 5.0,
+            unit_cost: 5.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: None,
+            loss_mode: None,
+        }];
+        do_purchase_work(&conn, 0.0, &second).unwrap();
+
+        let cost: f64 = conn
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let expected = (10.0 * 3.0 + 5.0 * 5.0) / 15.0;
+        assert!((cost - expected).abs() < 1e-9, "expected {}, got {}", expected, cost);
+    }
+
+    #[test]
+    fn purchase_freight_does_not_affect_cost_price() {
+        // Scenario "Frete não entra no custo do insumo"
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Papel Foto", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 10.0,
+            unit_cost: 4.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: None,
+            loss_mode: None,
+        }];
+        do_purchase_work(&conn, 100.0, &items).unwrap();
+
+        let cost: f64 = conn
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        // custo_unit_lote = (10*4)/10 = 4.0 (freight excluded)
+        assert!((cost - 4.0).abs() < 1e-9, "freight should not affect cost_price, got {}", cost);
+    }
+
+    #[test]
+    fn purchase_box_unit_conversion_adjusts_unit_lot_cost() {
+        // Scenario "Conversão caixa para unidade no custo unitário"
+        // 2 caixas, unit_cost=10/caixa, box_qty=1, unit_qty=500 → stock_qty=1000
+        // custo_unit_lote = (2*10)/1000 = 0.02/unidade
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Folha A4", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 2.0,
+            unit_cost: 10.0,
+            box_qty: Some(1.0),
+            unit_qty: Some(500.0),
+            loss_rate: None,
+            loss_mode: None,
+        }];
+        do_purchase_work(&conn, 0.0, &items).unwrap();
+
+        let cost: f64 = conn
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let expected = (2.0 * 10.0) / 1000.0;
+        assert!((cost - expected).abs() < 1e-9, "expected {}, got {}", expected, cost);
+    }
 
     #[test]
     fn purchase_records_loss_rate_and_propagates_to_product() {
