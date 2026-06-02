@@ -144,6 +144,15 @@ O sistema SHALL oferecer, por item de compra, a escolha explícita do modo da pe
 - **WHEN** uma compra é salva com perda fixada
 - **THEN** `Purchase_Items.loss_rate` retém o valor daquela compra para auditoria, independentemente de compras futuras alterarem `Products.expected_loss_rate`
 
+### Requirement: Botão de ajuste visualmente clicável
+
+O botão "Ajuste" na tabela de saldo de estoque SHALL usar `variant="secondary"` para ter aparência de ação clicável, distinguindo-o visualmente das células da tabela.
+
+#### Scenario: Botão Ajuste renderizado na tabela de saldo
+
+- **WHEN** a tabela de saldo de estoque é exibida com ao menos um produto
+- **THEN** cada linha exibe o botão "Ajuste" com fundo sólido (`variant="secondary"`), não transparente
+
 ### Requirement: Custo médio ponderado do insumo na compra
 
 O sistema SHALL recalcular o `Products.cost_price` de cada insumo comprado como **média ponderada por quantidade em estoque**, tornando a compra a única fonte do custo do insumo (espelhando o que já ocorre com `expected_loss_rate`). O custo unitário do lote SHALL ser o custo por **unidade de estoque** do item (custo total do lote dividido pela quantidade efetivamente movimentada em estoque, após conversão caixa→unidade). O **frete fica fora** do `cost_price`, permanecendo apenas em `Purchases.total_cost`. O novo custo SHALL ser `(saldo_atual × cost_price_atual + qtd_estoque_lote × custo_unitário_lote) / (saldo_atual + qtd_estoque_lote)`, usando o saldo de estoque anterior à entrada do lote.
