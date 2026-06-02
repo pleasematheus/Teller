@@ -141,6 +141,7 @@ export function UsuariosSection({ user }: Props) {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-teller-text font-medium truncate">{u.name}</p>
                   <p className="text-xs text-teller-muted">@{u.nickname}</p>
+                  <p className="text-xs text-teller-muted">#{u.id}</p>
                 </div>
                 <span
                   className={`text-xs px-2 py-0.5 rounded-full ${
