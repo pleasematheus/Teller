@@ -144,7 +144,7 @@ export function StockBalance({ onAdjust }: Props) {
                     <td className="px-4 py-3">
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="secondary"
                         onClick={() => onAdjust(item.product_id)}
                       >
                         Ajuste
