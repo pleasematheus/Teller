@@ -86,6 +86,8 @@ pub fn run() {
             settings::rename_unit_of_measure,
             settings::update_unit_of_measure,
             settings::delete_unit_of_measure,
+            settings::get_system_setting,
+            settings::set_system_setting,
             reports::get_dre,
         ])
         .build(tauri::generate_context!())
