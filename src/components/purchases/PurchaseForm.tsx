@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ProductCommand } from "@/components/ui/ProductCommand"
-import type { Product, PurchaseItemPayload } from "@/types/product"
+import type { Product, PurchaseItemPayload, PricingRates } from "@/types/product"
+import { computePrice } from "@/lib/pricing"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -12,6 +13,7 @@ type ItemState = {
   id: string
   productId: number | ""
   productName: string
+  productUnit: string
   quantity: string
   unitCost: string
   boxQty: string
@@ -19,12 +21,16 @@ type ItemState = {
   showConversion: boolean
   lossRatePct: string
   lossMode: "auto" | "manual"
+  finalPrice: string
+  finalPriceDirty: boolean
+  productProfitMargin: number | undefined
 }
 
 const newItem = (): ItemState => ({
   id: crypto.randomUUID(),
   productId: "",
   productName: "",
+  productUnit: "",
   quantity: "",
   unitCost: "",
   boxQty: "",
@@ -32,6 +38,9 @@ const newItem = (): ItemState => ({
   showConversion: false,
   lossRatePct: "0",
   lossMode: "auto",
+  finalPrice: "",
+  finalPriceDirty: false,
+  productProfitMargin: undefined,
 })
 
 function stockQty(item: ItemState): number {
@@ -42,10 +51,36 @@ function stockQty(item: ItemState): number {
   return qty
 }
 
+function computeFreightShare(item: ItemState, freightVal: number, items: ItemState[]): number {
+  const subtotal = items.reduce(
+    (acc, i) => acc + (parseFloat(i.quantity) || 0) * (parseFloat(i.unitCost) || 0),
+    0,
+  )
+  if (subtotal <= 0) return 0
+  const lineValue = (parseFloat(item.quantity) || 0) * (parseFloat(item.unitCost) || 0)
+  return freightVal * lineValue / subtotal
+}
+
+function computeSuggestedPrice(
+  item: ItemState,
+  freightShare: number,
+  rates: PricingRates,
+): number {
+  const qty = parseFloat(item.quantity) || 0
+  const cost = parseFloat(item.unitCost) || 0
+  const sQty = stockQty(item)
+  if (sQty <= 0) return 0
+  const lotCost = qty * cost + freightShare
+  const effectiveLotCost = lotCost / sQty
+  const lossRate = (parseFloat(item.lossRatePct) || 0) / 100
+  return computePrice(effectiveLotCost, lossRate, rates, item.productProfitMargin).final_price
+}
+
 type Props = { onSaved: () => void }
 
 export function PurchaseForm({ onSaved }: Props) {
   const [products, setProducts] = useState<Product[]>([])
+  const [rates, setRates] = useState<PricingRates | null>(null)
   const [freight, setFreight] = useState("0")
   const [items, setItems] = useState<ItemState[]>([newItem()])
   const [searchOpen, setSearchOpen] = useState(false)
@@ -55,6 +90,7 @@ export function PurchaseForm({ onSaved }: Props) {
 
   useEffect(() => {
     invoke<Product[]>("list_products").then(setProducts).catch(console.error)
+    invoke<PricingRates>("get_pricing_rates").then(setRates).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -79,16 +115,23 @@ export function PurchaseForm({ onSaved }: Props) {
   const handleProductSelected = (product: Product) => {
     const targetId = activeRowId ?? items[0]?.id
     if (!targetId) return
-    update(targetId, { productId: product.id, productName: product.name })
+    update(targetId, {
+      productId: product.id,
+      productName: product.name,
+      productUnit: product.unit,
+      productProfitMargin: product.profit_margin,
+      finalPriceDirty: false,
+    })
     invoke<number>("get_product_loss_rate", { productId: product.id })
       .then((rate) => update(targetId, { lossRatePct: String((rate * 100).toFixed(2)) }))
       .catch(() => {})
   }
 
+  const freightVal = parseFloat(freight) || 0
   const subtotal = items.reduce((acc, i) => {
     return acc + (parseFloat(i.quantity) || 0) * (parseFloat(i.unitCost) || 0)
   }, 0)
-  const total = subtotal + (parseFloat(freight) || 0)
+  const total = subtotal + freightVal
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -99,13 +142,21 @@ export function PurchaseForm({ onSaved }: Props) {
       const cost = parseFloat(i.unitCost)
       if (!i.productId || !qty || qty <= 0 || !cost || cost < 0) return null
       const lossRate = parseFloat(i.lossRatePct)
+
+      const freightShare = computeFreightShare(i, freightVal, items)
+      const fp = i.finalPriceDirty
+        ? parseFloat(i.finalPrice) || 0
+        : rates
+          ? computeSuggestedPrice(i, freightShare, rates)
+          : 0
+
       return {
         product_id: i.productId as number,
         quantity: qty,
         unit_cost: cost,
+        final_price: fp,
         box_qty: i.showConversion && i.boxQty ? parseFloat(i.boxQty) : null,
         unit_qty: i.showConversion && i.unitQty ? parseFloat(i.unitQty) : null,
-        // Auto: backend congela a taxa medida (loss_rate null). Manual: usa o override.
         loss_rate: i.lossMode === "manual" && !isNaN(lossRate) ? lossRate / 100 : null,
         loss_mode: i.lossMode,
       }
@@ -118,7 +169,7 @@ export function PurchaseForm({ onSaved }: Props) {
     setSaving(true)
     try {
       await invoke("create_purchase", {
-        freight: parseFloat(freight) || 0,
+        freight: freightVal,
         items: parsed,
       })
       setItems([newItem()])
@@ -143,7 +194,11 @@ export function PurchaseForm({ onSaved }: Props) {
             min={0}
             step="0.01"
             value={freight}
-            onChange={(e) => setFreight(e.target.value)}
+            onChange={(e) => {
+              setFreight(e.target.value)
+              // Reset dirty flags so suggestions recalculate with new freight
+              setItems((prev) => prev.map((i) => ({ ...i, finalPriceDirty: false })))
+            }}
             className="max-w-xs"
           />
         </div>
@@ -162,144 +217,209 @@ export function PurchaseForm({ onSaved }: Props) {
             </Button>
           </div>
 
-          {items.map((item, idx) => (
-            <div
-              key={item.id}
-              className="rounded-lg border border-teller-border bg-teller-card p-4 flex flex-col gap-3"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-teller-muted font-medium">Item {idx + 1}</span>
-                {items.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => setItems((prev) => prev.filter((i) => i.id !== item.id))}
-                    className="text-xs text-red-500 hover:text-red-600"
-                  >
-                    Remover
-                  </button>
-                )}
-              </div>
+          {items.map((item, idx) => {
+            const freightShare = computeFreightShare(item, freightVal, items)
+            const suggestedPrice = rates ? computeSuggestedPrice(item, freightShare, rates) : 0
+            const displayedPrice = item.finalPriceDirty
+              ? item.finalPrice
+              : suggestedPrice > 0 ? suggestedPrice.toFixed(2) : ""
 
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-end">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-teller-muted">Produto</label>
-                  <button
-                    type="button"
-                    onClick={() => openSearchForRow(item.id)}
-                    className="flex h-10 w-full items-center rounded-md border border-teller-border bg-teller-card px-3 text-sm text-left hover:bg-teller-accent/5 transition-colors"
-                  >
-                    {item.productName ? (
-                      <span className="text-teller-text truncate">{item.productName}</span>
-                    ) : (
-                      <span className="text-teller-muted">Selecione… <span className="opacity-50 text-xs">F2</span></span>
-                    )}
-                  </button>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-teller-muted">Qtd</label>
-                  <Input
-                    type="number"
-                    min={0.0001}
-                    step="any"
-                    value={item.quantity}
-                    onChange={(e) => update(item.id, { quantity: e.target.value })}
-                    placeholder="0"
-                    className="w-24"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-teller-muted">Custo unit. (R$)</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={item.unitCost}
-                    onChange={(e) => update(item.id, { unitCost: e.target.value })}
-                    placeholder="0,00"
-                    className="w-28"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-teller-muted">Perda (%)</label>
-                  <div className="flex gap-2 text-xs mb-1">
+            const lossRate = (parseFloat(item.lossRatePct) || 0) / 100
+            const sQty = stockQty(item)
+            const effectiveLotCost =
+              sQty > 0
+                ? ((parseFloat(item.quantity) || 0) * (parseFloat(item.unitCost) || 0) + freightShare) / sQty
+                : 0
+            const cmv = lossRate < 1 && effectiveLotCost > 0 ? effectiveLotCost / (1 - lossRate) : 0
+            const enteredPrice = parseFloat(displayedPrice) || 0
+            const belowCost = cmv > 0 && enteredPrice > 0 && enteredPrice < cmv
+
+            return (
+              <div
+                key={item.id}
+                className="rounded-lg border border-teller-border bg-teller-card p-4 flex flex-col gap-3"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-teller-muted font-medium">Item {idx + 1}</span>
+                  {items.length > 1 && (
                     <button
                       type="button"
-                      onClick={() => update(item.id, { lossMode: "auto" })}
-                      className={item.lossMode === "auto" ? "text-teller-accent font-medium" : "text-teller-muted hover:text-teller-text"}
+                      onClick={() => setItems((prev) => prev.filter((i) => i.id !== item.id))}
+                      className="text-xs text-red-500 hover:text-red-600"
                     >
-                      Auto
+                      Remover
                     </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-end">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-teller-muted">Produto</label>
                     <button
                       type="button"
-                      onClick={() => update(item.id, { lossMode: "manual" })}
-                      className={item.lossMode === "manual" ? "text-teller-accent font-medium" : "text-teller-muted hover:text-teller-text"}
+                      onClick={() => openSearchForRow(item.id)}
+                      className="flex h-10 w-full items-center rounded-md border border-teller-border bg-teller-card px-3 text-sm text-left hover:bg-teller-accent/5 transition-colors"
                     >
-                      Manual
+                      {item.productName ? (
+                        <span className="text-teller-text truncate">{item.productName}</span>
+                      ) : (
+                        <span className="text-teller-muted">Selecione… <span className="opacity-50 text-xs">F2</span></span>
+                      )}
                     </button>
                   </div>
-                  {item.lossMode === "auto" ? (
-                    <div className="flex h-10 w-20 items-center rounded-md border border-teller-border bg-teller-card px-2 text-sm text-teller-muted">
-                      {item.lossRatePct || "0"}%
-                    </div>
-                  ) : (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-teller-muted">Qtd</label>
+                    <Input
+                      type="number"
+                      min={0.0001}
+                      step="any"
+                      value={item.quantity}
+                      onChange={(e) => update(item.id, { quantity: e.target.value, finalPriceDirty: false })}
+                      placeholder="0"
+                      className="w-24"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-teller-muted">Custo unit. (R$)</label>
                     <Input
                       type="number"
                       min={0}
-                      max={99}
                       step="0.01"
-                      value={item.lossRatePct}
-                      onChange={(e) => update(item.id, { lossRatePct: e.target.value })}
-                      placeholder="0"
-                      className="w-20"
+                      value={item.unitCost}
+                      onChange={(e) => update(item.id, { unitCost: e.target.value, finalPriceDirty: false })}
+                      placeholder="0,00"
+                      className="w-28"
                     />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-teller-muted">Perda (%)</label>
+                    <div className="flex gap-2 text-xs mb-1">
+                      <button
+                        type="button"
+                        onClick={() => update(item.id, { lossMode: "auto" })}
+                        className={item.lossMode === "auto" ? "text-teller-accent font-medium" : "text-teller-muted hover:text-teller-text"}
+                      >
+                        Auto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => update(item.id, { lossMode: "manual" })}
+                        className={item.lossMode === "manual" ? "text-teller-accent font-medium" : "text-teller-muted hover:text-teller-text"}
+                      >
+                        Manual
+                      </button>
+                    </div>
+                    {item.lossMode === "auto" ? (
+                      <div className="flex h-10 w-20 items-center rounded-md border border-teller-border bg-teller-card px-2 text-sm text-teller-muted">
+                        {item.lossRatePct || "0"}%
+                      </div>
+                    ) : (
+                      <Input
+                        type="number"
+                        min={0}
+                        max={99}
+                        step="0.01"
+                        value={item.lossRatePct}
+                        onChange={(e) => update(item.id, { lossRatePct: e.target.value, finalPriceDirty: false })}
+                        placeholder="0"
+                        className="w-20"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => update(item.id, { showConversion: !item.showConversion })}
+                  className="text-xs text-teller-accent hover:underline text-left"
+                >
+                  {item.showConversion ? "▲ Ocultar conversão" : "▼ Conversão caixa → unidade"}
+                </button>
+
+                {item.showConversion && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-teller-muted">Qtd por caixa</label>
+                      <Input
+                        type="number"
+                        min={0.0001}
+                        step="any"
+                        value={item.boxQty}
+                        onChange={(e) => update(item.id, { boxQty: e.target.value, finalPriceDirty: false })}
+                        placeholder="1"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-teller-muted">Unidades por caixa</label>
+                      <Input
+                        type="number"
+                        min={0.0001}
+                        step="any"
+                        value={item.unitQty}
+                        onChange={(e) => update(item.id, { unitQty: e.target.value, finalPriceDirty: false })}
+                        placeholder="1"
+                      />
+                    </div>
+                    {item.boxQty && item.unitQty && item.quantity && (
+                      <p className="col-span-2 text-xs text-teller-muted">
+                        Entrará em estoque:{" "}
+                        <span className="text-teller-text font-medium">
+                          {stockQty(item).toFixed(2)} {item.productUnit || "unidades"}
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex items-end gap-3 pt-1 border-t border-teller-border/50">
+                  <div className="flex flex-col gap-1 flex-1">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-teller-muted">
+                        Preço de venda{item.productUnit ? ` (R$/${item.productUnit})` : " (R$)"}
+                      </label>
+                      {!item.finalPriceDirty && suggestedPrice > 0 && (
+                        <span className="text-xs text-teller-accent/70">calculado</span>
+                      )}
+                      {item.finalPriceDirty && (
+                        <button
+                          type="button"
+                          onClick={() => update(item.id, { finalPriceDirty: false })}
+                          className="text-xs text-teller-muted hover:text-teller-accent"
+                        >
+                          restaurar sugestao
+                        </button>
+                      )}
+                    </div>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={displayedPrice}
+                      onChange={(e) =>
+                        update(item.id, { finalPrice: e.target.value, finalPriceDirty: true })
+                      }
+                      placeholder="0,00"
+                      className={belowCost ? "border-amber-400" : ""}
+                    />
+                    {belowCost && (
+                      <p className="text-xs text-amber-600">
+                        Abaixo do CMV ({brl.format(cmv)}) — margem negativa.
+                      </p>
+                    )}
+                  </div>
+                  {effectiveLotCost > 0 && (
+                    <div className="flex flex-col gap-1 pb-px">
+                      <span className="text-xs text-teller-muted">Custo efetivo</span>
+                      <span className="text-sm text-teller-text font-medium h-10 flex items-center">
+                        {brl.format(effectiveLotCost)}
+                        {item.productUnit ? `/${item.productUnit}` : ""}
+                      </span>
+                    </div>
                   )}
                 </div>
               </div>
-
-              <button
-                type="button"
-                onClick={() => update(item.id, { showConversion: !item.showConversion })}
-                className="text-xs text-teller-accent hover:underline text-left"
-              >
-                {item.showConversion ? "▲ Ocultar conversão" : "▼ Conversão caixa → unidade"}
-              </button>
-
-              {item.showConversion && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-teller-muted">Qtd por caixa</label>
-                    <Input
-                      type="number"
-                      min={0.0001}
-                      step="any"
-                      value={item.boxQty}
-                      onChange={(e) => update(item.id, { boxQty: e.target.value })}
-                      placeholder="1"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs text-teller-muted">Unidades por caixa</label>
-                    <Input
-                      type="number"
-                      min={0.0001}
-                      step="any"
-                      value={item.unitQty}
-                      onChange={(e) => update(item.id, { unitQty: e.target.value })}
-                      placeholder="1"
-                    />
-                  </div>
-                  {item.boxQty && item.unitQty && item.quantity && (
-                    <p className="col-span-2 text-xs text-teller-muted">
-                      Entrará em estoque:{" "}
-                      <span className="text-teller-text font-medium">
-                        {stockQty(item).toFixed(2)} unidades
-                      </span>
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         {/* Total preview */}

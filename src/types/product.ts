@@ -17,6 +17,7 @@ export interface PurchaseItemPayload {
   product_id: number
   quantity: number
   unit_cost: number
+  final_price: number
   box_qty: number | null
   unit_qty: number | null
   loss_rate: number | null

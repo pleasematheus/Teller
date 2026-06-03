@@ -72,10 +72,7 @@ pub(crate) fn validate_unit(conn: &Connection, unit: &str, require_active: bool)
     Ok(())
 }
 
-#[tauri::command]
-pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-
+pub fn get_pricing_rates_raw(conn: &Connection) -> PricingRates {
     let (investment_rate, profit_margin): (f64, f64) = conn
         .query_row(
             r#"SELECT investment_rate, profit_margin FROM "Business_Settings" LIMIT 1"#,
@@ -98,13 +95,13 @@ pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> 
         .unwrap_or(0.0);
 
     if faturamento_ref == 0.0 {
-        return Ok(PricingRates {
+        return PricingRates {
             cv: 0.0,
             df: 0.0,
             investment_rate,
             profit_margin,
             no_sales_history: true,
-        });
+        };
     }
 
     let cv_total: f64 = conn
@@ -124,8 +121,6 @@ pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> 
         )
         .unwrap_or(0.0);
 
-    // Task 4.1: "card" = method with at least one Transaction_Fee with fee_percent > 0 or fixed_fee > 0
-    // Task 4.2: add SUM(amount_paid - net_amount) from card payments in last 12 months to cv numerator
     let card_fee_sum: f64 = conn
         .query_row(
             r#"SELECT COALESCE(SUM(sp.amount_paid - sp.net_amount), 0.0)
@@ -140,7 +135,6 @@ pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> 
         )
         .unwrap_or(0.0);
 
-    // Task 4.3: fallback — when no card history, use MAX configured fee as conservative estimate
     let card_cv: f64 = if card_fee_sum > 0.0 {
         card_fee_sum / faturamento_ref
     } else {
@@ -153,13 +147,19 @@ pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> 
         .unwrap_or(0.0)
     };
 
-    Ok(PricingRates {
+    PricingRates {
         cv: (cv_total / faturamento_ref) + card_cv,
         df: df_total / faturamento_ref,
         investment_rate,
         profit_margin,
         no_sales_history: false,
-    })
+    }
+}
+
+#[tauri::command]
+pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(get_pricing_rates_raw(&conn))
 }
 
 pub fn get_product_loss_rate_raw(conn: &Connection, product_id: i64) -> f64 {

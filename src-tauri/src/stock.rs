@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::DbState;
-use crate::products::{get_product_loss_rate_raw, validate_loss_mode};
+use crate::products::{get_pricing_rates_raw, get_product_loss_rate_raw, validate_loss_mode};
 
 #[derive(Serialize)]
 pub struct StockItem {
@@ -18,6 +18,7 @@ pub struct PurchaseItemInput {
     pub product_id: i64,
     pub quantity: f64,
     pub unit_cost: f64,
+    pub final_price: f64,
     pub box_qty: Option<f64>,
     pub unit_qty: Option<f64>,
     pub loss_rate: Option<f64>,
@@ -87,8 +88,8 @@ pub fn do_purchase_work(
     freight: f64,
     items: &[PurchaseItemInput],
 ) -> Result<(), String> {
-    let total_cost: f64 =
-        items.iter().map(|i| i.quantity * i.unit_cost).sum::<f64>() + freight;
+    let subtotal: f64 = items.iter().map(|i| i.quantity * i.unit_cost).sum();
+    let total_cost = subtotal + freight;
 
     let purchase_id: i64 = conn
         .query_row(
@@ -99,6 +100,8 @@ pub fn do_purchase_work(
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
+
+    let rates = get_pricing_rates_raw(conn);
 
     for item in items {
         // The purchase is the sole writer of the supply's loss rate and mode.
@@ -152,7 +155,12 @@ pub fn do_purchase_work(
             _ => item.quantity,
         };
 
-        let custo_unit_lote = (item.quantity * item.unit_cost) / stock_qty;
+        // Freight share proportional to line value; zero when subtotal is zero.
+        let line_value = item.quantity * item.unit_cost;
+        let freight_share = if subtotal > 0.0 { freight * line_value / subtotal } else { 0.0 };
+        let lot_cost = line_value + freight_share;
+        let custo_unit_lote = lot_cost / stock_qty;
+
         let denom = saldo_ant + stock_qty;
         let novo_custo = if denom > 0.0 {
             (saldo_ant * custo_ant + stock_qty * custo_unit_lote) / denom
@@ -165,6 +173,20 @@ pub fn do_purchase_work(
             params![novo_custo, item.product_id],
         )
         .map_err(|e| e.to_string())?;
+
+        // Persist final_price and derive markup/profit_margin when operator provided a price.
+        if item.final_price > 0.0 && effective_loss < 1.0 {
+            let cmv = novo_custo / (1.0 - effective_loss);
+            let markup = item.final_price / cmv;
+            let profit_margin = 1.0 - rates.cv - rates.df - rates.investment_rate - cmv / item.final_price;
+            conn.execute(
+                r#"UPDATE "Products"
+                   SET final_price = ?, markup = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ?"#,
+                params![item.final_price, markup, profit_margin, item.product_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
 
         conn.execute(
             r#"INSERT INTO "Stock_Movements"
@@ -512,6 +534,7 @@ mod tests {
             product_id,
             quantity: 10.0,
             unit_cost: 3.0,
+            final_price: 0.0,
             box_qty: None,
             unit_qty: None,
             loss_rate: None,
@@ -541,6 +564,7 @@ mod tests {
             product_id,
             quantity: 10.0,
             unit_cost: 3.0,
+            final_price: 0.0,
             box_qty: None,
             unit_qty: None,
             loss_rate: None,
@@ -552,6 +576,7 @@ mod tests {
             product_id,
             quantity: 5.0,
             unit_cost: 5.0,
+            final_price: 0.0,
             box_qty: None,
             unit_qty: None,
             loss_rate: None,
@@ -571,8 +596,10 @@ mod tests {
     }
 
     #[test]
-    fn purchase_freight_does_not_affect_cost_price() {
-        // Scenario "Frete não entra no custo do insumo"
+    fn purchase_freight_enters_cost_price_proportionally() {
+        // Scenario "Frete rateado entra no custo do insumo"
+        // single item: qty=10, unit_cost=4 → subtotal=40, freight=100
+        // freight_share = 100 * 40/40 = 100, lot_cost=140, custo_unit_lote=14.0
         let conn = test_db();
         let product_id = insert_product(&conn, "Papel Foto", false);
 
@@ -580,6 +607,7 @@ mod tests {
             product_id,
             quantity: 10.0,
             unit_cost: 4.0,
+            final_price: 0.0,
             box_qty: None,
             unit_qty: None,
             loss_rate: None,
@@ -594,8 +622,8 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        // custo_unit_lote = (10*4)/10 = 4.0 (freight excluded)
-        assert!((cost - 4.0).abs() < 1e-9, "freight should not affect cost_price, got {}", cost);
+        // lot_cost = (10*4) + 100 = 140; custo_unit_lote = 140/10 = 14.0
+        assert!((cost - 14.0).abs() < 1e-9, "expected 14.0, got {}", cost);
     }
 
     #[test]
@@ -610,6 +638,7 @@ mod tests {
             product_id,
             quantity: 2.0,
             unit_cost: 10.0,
+            final_price: 0.0,
             box_qty: Some(1.0),
             unit_qty: Some(500.0),
             loss_rate: None,
@@ -637,6 +666,7 @@ mod tests {
             product_id,
             quantity: 10.0,
             unit_cost: 5.0,
+            final_price: 0.0,
             box_qty: None,
             unit_qty: None,
             loss_rate: None,
@@ -673,6 +703,7 @@ mod tests {
             product_id,
             quantity: 5.0,
             unit_cost: 20.0,
+            final_price: 0.0,
             box_qty: None,
             unit_qty: None,
             loss_rate: Some(0.15),
@@ -720,6 +751,7 @@ mod tests {
             product_id,
             quantity: 10.0,
             unit_cost: 3.0,
+            final_price: 0.0,
             box_qty: None,
             unit_qty: None,
             loss_rate: None,
@@ -748,6 +780,7 @@ mod tests {
             product_id,
             quantity: 4.0,
             unit_cost: 8.0,
+            final_price: 0.0,
             box_qty: None,
             unit_qty: None,
             loss_rate: Some(0.25),
@@ -776,6 +809,7 @@ mod tests {
             product_id,
             quantity: 2.0,
             unit_cost: 5.0,
+            final_price: 0.0,
             box_qty: None,
             unit_qty: None,
             loss_rate: None,
@@ -1123,5 +1157,135 @@ mod tests {
             )
             .unwrap();
         assert_eq!(qty, 5);
+    }
+
+    #[test]
+    fn purchase_freight_rateado_proportional_multi_item() {
+        // Scenario "Frete rateado entra no custo do insumo"
+        // A: qty=5, unit_cost=2 → line=10; B: qty=10, unit_cost=3 → line=30; subtotal=40, freight=20
+        // freight_share_A = 20*10/40=5, custo_unit_lote_A = 15/5=3.0
+        // freight_share_B = 20*30/40=15, custo_unit_lote_B = 45/10=4.5
+        let conn = test_db();
+        let id_a = insert_product(&conn, "Insumo A", false);
+        let id_b = insert_product(&conn, "Insumo B", false);
+
+        let items = vec![
+            PurchaseItemInput {
+                product_id: id_a,
+                quantity: 5.0,
+                unit_cost: 2.0,
+                final_price: 0.0,
+                box_qty: None,
+                unit_qty: None,
+                loss_rate: None,
+                loss_mode: None,
+            },
+            PurchaseItemInput {
+                product_id: id_b,
+                quantity: 10.0,
+                unit_cost: 3.0,
+                final_price: 0.0,
+                box_qty: None,
+                unit_qty: None,
+                loss_rate: None,
+                loss_mode: None,
+            },
+        ];
+        do_purchase_work(&conn, 20.0, &items).unwrap();
+
+        let cost_a: f64 = conn
+            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![id_a], |r| r.get(0))
+            .unwrap();
+        let cost_b: f64 = conn
+            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![id_b], |r| r.get(0))
+            .unwrap();
+        assert!((cost_a - 3.0).abs() < 1e-9, "expected 3.0, got {}", cost_a);
+        assert!((cost_b - 4.5).abs() < 1e-9, "expected 4.5, got {}", cost_b);
+    }
+
+    #[test]
+    fn purchase_freight_not_rateado_when_subtotal_zero() {
+        // Scenario "Frete não rateado quando o subtotal é zero"
+        // unit_cost=0 → subtotal=0 → freight_share=0 → cost_price=0
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Brinde", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 5.0,
+            unit_cost: 0.0,
+            final_price: 0.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: None,
+            loss_mode: None,
+        }];
+        do_purchase_work(&conn, 50.0, &items).unwrap();
+
+        let cost: f64 = conn
+            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .unwrap();
+        assert!((cost - 0.0).abs() < 1e-9, "expected 0.0, got {}", cost);
+    }
+
+    #[test]
+    fn purchase_final_price_persisted_and_margins_derived() {
+        // Scenario "Persistência do preço de venda no produto"
+        // No Business_Settings → cv=0, df=0, investment_rate=0
+        // cost_price after purchase: (10*4+0)/10=4.0, loss=0 → cmv=4.0
+        // markup=6.0/4.0=1.5, profit_margin=1-0-0-0-4/6≈0.3333
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Produto X", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 10.0,
+            unit_cost: 4.0,
+            final_price: 6.0,
+            box_qty: None,
+            unit_qty: None,
+            loss_rate: None,
+            loss_mode: None,
+        }];
+        do_purchase_work(&conn, 0.0, &items).unwrap();
+
+        let (fp, markup, margin): (f64, f64, f64) = conn
+            .query_row(
+                r#"SELECT CAST(final_price AS DOUBLE), CAST(markup AS DOUBLE), CAST(profit_margin AS DOUBLE)
+                   FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert!((fp - 6.0).abs() < 1e-9, "final_price: expected 6.0, got {}", fp);
+        assert!((markup - 1.5).abs() < 1e-9, "markup: expected 1.5, got {}", markup);
+        let expected_margin = 1.0 - 4.0_f64 / 6.0_f64;
+        assert!((margin - expected_margin).abs() < 1e-9, "profit_margin: expected {}, got {}", expected_margin, margin);
+    }
+
+    #[test]
+    fn purchase_freight_rateado_with_box_unit_conversion() {
+        // Scenario "Conversão caixa para unidade no custo unitário" + freight
+        // qty=2 boxes, box_qty=1, unit_qty=10, unit_cost=5 → line=10, subtotal=10, freight=10
+        // freight_share = 10*10/10=10, lot_cost=20, stock_qty=20, custo_unit_lote=1.0
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Papel Unidade", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id,
+            quantity: 2.0,
+            unit_cost: 5.0,
+            final_price: 0.0,
+            box_qty: Some(1.0),
+            unit_qty: Some(10.0),
+            loss_rate: None,
+            loss_mode: None,
+        }];
+        do_purchase_work(&conn, 10.0, &items).unwrap();
+
+        let cost: f64 = conn
+            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .unwrap();
+        assert!((cost - 1.0).abs() < 1e-9, "expected 1.0, got {}", cost);
     }
 }
