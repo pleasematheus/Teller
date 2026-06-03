@@ -247,6 +247,15 @@ pub fn do_close_sale_work(
         return Err("Venda já foi fechada".to_string());
     }
 
+    let allow_negative: bool = conn
+        .query_row(
+            r#"SELECT "value" FROM "System_Settings" WHERE "key" = 'allow_negative_stock_sale'"#,
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| "false".to_string())
+        == "true";
+
     for item in items {
         let price: f64 = conn
             .query_row(
@@ -374,7 +383,7 @@ pub fn do_close_sale_work(
                     )
                     .unwrap_or(0.0);
 
-                if current_stock < quantity as f64 {
+                if current_stock < quantity as f64 && !allow_negative {
                     warnings.push(format!(
                         "Estoque insuficiente de '{}': disponível {:.2}, necessário {:.2}",
                         product_name, current_stock, quantity as f64
@@ -392,7 +401,7 @@ pub fn do_close_sale_work(
                 for (child_id, comp_qty, child_name, current_stock) in components {
                     let qty_to_consume = comp_qty as f64 * quantity as f64;
 
-                    if current_stock < qty_to_consume {
+                    if current_stock < qty_to_consume && !allow_negative {
                         warnings.push(format!(
                             "Estoque insuficiente de '{}': disponível {:.2}, necessário {:.2}",
                             child_name, current_stock, qty_to_consume
@@ -1284,6 +1293,118 @@ mod tests {
         assert_eq!(rows[0].0, "Dinheiro");
         assert!((rows[0].1 - 30.0).abs() < 1e-6, "amount_paid deve ser 30.0");
         assert!((rows[0].2 - 30.0).abs() < 1e-6, "net_amount sem taxa deve ser 30.0");
+    }
+
+    #[test]
+    fn close_sale_flag_false_resale_insufficient_stock_returns_warning() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Caneca", true);
+        // flag already 'false' from seed
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let items = vec![SaleItemInput { product_id, quantity: 1, discount: 0.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        assert_eq!(warnings.len(), 1, "flag=false deve gerar aviso de estoque insuficiente");
+        let status: String = conn.query_row(r#"SELECT status FROM "Sales" WHERE id = ?"#, params![sale_id], |r| r.get(0)).unwrap();
+        assert_eq!(status, "closed", "Venda deve prosseguir mesmo com aviso");
+    }
+
+    #[test]
+    fn close_sale_flag_false_component_insufficient_stock_returns_warning() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let foto_id = insert_product(&conn, "Foto 10x15", true);
+        let papel_id = insert_product(&conn, "Papel", false);
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        // flag already 'false' from seed; no stock for papel
+
+        add_product_component_in_test(&conn, foto_id, papel_id, 1);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, foto_id],
+        ).unwrap();
+
+        let items = vec![SaleItemInput { product_id: foto_id, quantity: 1, discount: 0.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        assert_eq!(warnings.len(), 1, "flag=false deve gerar aviso de insumo insuficiente");
+        assert!(warnings[0].contains("Papel"));
+        let status: String = conn.query_row(r#"SELECT status FROM "Sales" WHERE id = ?"#, params![sale_id], |r| r.get(0)).unwrap();
+        assert_eq!(status, "closed");
+    }
+
+    #[test]
+    fn close_sale_flag_true_insufficient_stock_proceeds_without_warnings() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Caneca", true);
+
+        // Set flag to 'true'
+        conn.execute(
+            r#"UPDATE "System_Settings" SET "value" = 'true' WHERE "key" = 'allow_negative_stock_sale'"#,
+            [],
+        ).unwrap();
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let items = vec![SaleItemInput { product_id, quantity: 1, discount: 0.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 10.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        assert!(warnings.is_empty(), "flag=true não deve gerar avisos de estoque insuficiente");
+        let status: String = conn.query_row(r#"SELECT status FROM "Sales" WHERE id = ?"#, params![sale_id], |r| r.get(0)).unwrap();
+        assert_eq!(status, "closed");
+
+        let out_qty: f64 = conn.query_row(
+            r#"SELECT COALESCE(SUM(quantity), 0.0) FROM "Stock_Movements"
+               WHERE product_id = ? AND movement_type = 'out'"#,
+            params![product_id], |r| r.get(0),
+        ).unwrap();
+        assert!((out_qty - 1.0).abs() < 1e-9, "Baixa deve ser gravada mesmo com estoque negativo");
     }
 
     #[test]

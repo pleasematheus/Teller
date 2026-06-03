@@ -4,9 +4,20 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { computeMaxDiscount, applyGlobalDiscount, itemDiscountFraction } from "@/lib/pricing"
 import type { Product, PricingRates } from "@/types/product"
 import type { Sale, SaleItem, SaleItemInput, PaymentMethod, SalePaymentInput } from "@/types/sale"
+import type { StockItem } from "@/types/stock"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 const pct = new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1 })
@@ -45,6 +56,8 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
   const [globalMode, setGlobalMode] = useState<GlobalMode>("R$")
   const [itemModes, setItemModes] = useState<Record<number, GlobalMode>>({})
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null)
+  const [stockMap, setStockMap] = useState<Record<number, number>>({})
+  const [showStockConfirm, setShowStockConfirm] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
@@ -69,6 +82,16 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
       })
       .catch(() => {})
   }, [sale.id, products])
+
+  useEffect(() => {
+    invoke<StockItem[]>("list_stock")
+      .then((items) => {
+        const map: Record<number, number> = {}
+        for (const item of items) map[item.product_id] = item.current_quantity
+        setStockMap(map)
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     invoke<PaymentMethod[]>("list_payment_methods")
@@ -121,6 +144,10 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
   const discountedTotal = useMemo(
     () => cartItems.reduce((sum, i) => sum + i.final_price * i.quantity * (1 - i.discount), 0),
     [cartItems],
+  )
+
+  const insufficientItems = cartItems.filter(
+    (item) => stockMap[item.product_id] !== undefined && stockMap[item.product_id] < item.quantity,
   )
 
   const totalPaid = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
@@ -221,12 +248,27 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
                   : (item.discount * item.final_price * item.quantity).toFixed(2)
                 : ""
 
+              const stockQty = stockMap[item.product_id]
+              const stockInsufficient = insufficientItems.some((i) => i.product_id === item.product_id)
+
               return (
-                <div key={idx} className="rounded-lg border border-teller-border bg-teller-card p-3 flex flex-col gap-2">
+                <div
+                  key={idx}
+                  className={`rounded-lg border p-3 flex flex-col gap-2 ${
+                    stockInsufficient
+                      ? "border-amber-500/50 bg-amber-500/5"
+                      : "border-teller-border bg-teller-card"
+                  }`}
+                >
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-teller-text truncate flex-1">{item.product_name}</span>
                     <span className="text-xs text-teller-muted ml-2 shrink-0">×{item.quantity}</span>
                   </div>
+                  {stockInsufficient && (
+                    <p className="text-xs text-amber-600">
+                      Estoque insuficiente: disponível {stockQty.toFixed(2)}, necessário {item.quantity}
+                    </p>
+                  )}
                   <div className="flex gap-2 items-end">
                     <div className="flex flex-col gap-1 flex-1">
                       <div className="flex items-center justify-between gap-1">
@@ -398,11 +440,25 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
 
         {warnings.length > 0 && (
           <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 flex flex-col gap-2">
-            <p className="text-sm font-medium text-amber-600">Estoque insuficiente</p>
-            <ul className="flex flex-col gap-1">
-              {warnings.map((w, i) => (
-                <li key={i} className="text-xs text-amber-600">{w}</li>
-              ))}
+            <p className="text-sm font-medium text-amber-600">
+              Venda fechada com aviso de estoque
+            </p>
+            <ul className="flex flex-col gap-1.5">
+              {warnings.map((w, i) => {
+                const match = w.match(/de '(.+?)':/)
+                const productName = match ? match[1] : null
+                return (
+                  <li key={i} className="text-xs text-amber-700">
+                    {productName ? (
+                      <>
+                        <span className="font-medium">{productName}</span>
+                        {" — "}
+                        {w.replace(/^Estoque insuficiente de '.+?': /, "")}
+                      </>
+                    ) : w}
+                  </li>
+                )
+              })}
             </ul>
           </div>
         )}
@@ -412,12 +468,51 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
             {warnings.length > 0 ? "Fechar" : "Cancelar"}
           </Button>
           {warnings.length === 0 && (
-            <Button onClick={handleSubmit} disabled={!canSubmit || submitting} className="flex-1">
+            <Button
+              onClick={() => {
+                if (insufficientItems.length > 0) {
+                  setShowStockConfirm(true)
+                } else {
+                  handleSubmit()
+                }
+              }}
+              disabled={!canSubmit || submitting}
+              className="flex-1"
+            >
               {submitting ? "Fechando..." : "Confirmar pagamento"}
             </Button>
           )}
         </div>
       </div>
+
+      <AlertDialog open={showStockConfirm} onOpenChange={setShowStockConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Estoque insuficiente</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="flex flex-col gap-3">
+                <p>Os seguintes itens não têm estoque suficiente:</p>
+                <ul className="flex flex-col gap-1">
+                  {insufficientItems.map((item) => (
+                    <li key={item.product_id} className="text-sm">
+                      <span className="font-medium">{item.product_name}</span>
+                      {" — "}
+                      disponível {(stockMap[item.product_id] ?? 0).toFixed(2)}, necessário {item.quantity}
+                    </li>
+                  ))}
+                </ul>
+                <p>Deseja prosseguir mesmo assim? O estoque ficará negativo.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSubmit}>
+              Confirmar mesmo assim
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -580,6 +580,68 @@ pub fn delete_unit_of_measure(id: i64, state: State<DbState>) -> Result<(), Stri
     Ok(())
 }
 
+fn system_setting_default(key: &str) -> String {
+    match key {
+        "allow_negative_stock_sale" => "false".to_string(),
+        _ => String::new(),
+    }
+}
+
+fn normalize_setting_value(key: &str, value: &str) -> String {
+    match key {
+        "allow_negative_stock_sale" => {
+            if value == "true" { "true".to_string() } else { "false".to_string() }
+        }
+        _ => value.to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn get_system_setting(key: String, state: State<DbState>) -> Result<String, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let value: Option<String> = conn
+        .query_row(
+            r#"SELECT "value" FROM "System_Settings" WHERE "key" = ?"#,
+            params![key],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(value.unwrap_or_else(|| system_setting_default(&key)))
+}
+
+#[tauri::command]
+pub fn set_system_setting(key: String, value: String, state: State<DbState>) -> Result<(), String> {
+    let normalized = normalize_setting_value(&key, &value);
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+
+    let existing: Option<String> = conn
+        .query_row(
+            r#"SELECT "value" FROM "System_Settings" WHERE "key" = ?"#,
+            params![key],
+            |row| row.get(0),
+        )
+        .ok();
+
+    match existing {
+        Some(_) => {
+            conn.execute(
+                r#"UPDATE "System_Settings" SET "value" = ?, "updated_at" = CURRENT_TIMESTAMP WHERE "key" = ?"#,
+                params![normalized, key],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        None => {
+            conn.execute(
+                r#"INSERT INTO "System_Settings" ("key", "value", "updated_at") VALUES (?, ?, CURRENT_TIMESTAMP)"#,
+                params![key, normalized],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn insert_payment_method(conn: &duckdb::Connection, name: &str) -> i64 {
     conn.query_row(
@@ -1070,6 +1132,86 @@ mod tests {
             |r| r.get(0),
         ).unwrap();
         assert!(linked > 0, "should have linked products preventing deletion");
+    }
+
+    #[test]
+    fn get_system_setting_absent_key_returns_default() {
+        let conn = test_db();
+        conn.execute(
+            r#"DELETE FROM "System_Settings" WHERE "key" = 'allow_negative_stock_sale'"#,
+            [],
+        )
+        .unwrap();
+        let value: String = conn
+            .query_row(
+                r#"SELECT COALESCE((SELECT "value" FROM "System_Settings" WHERE "key" = 'allow_negative_stock_sale'), 'false')"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "false");
+    }
+
+    #[test]
+    fn set_system_setting_inserts_when_absent_and_updates_without_duplicate() {
+        let conn = test_db();
+        // Remove seed so we can test insert
+        conn.execute(
+            r#"DELETE FROM "System_Settings" WHERE "key" = 'allow_negative_stock_sale'"#,
+            [],
+        )
+        .unwrap();
+
+        // Insert
+        let existing: Option<String> = conn
+            .query_row(
+                r#"SELECT "value" FROM "System_Settings" WHERE "key" = 'allow_negative_stock_sale'"#,
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+        assert!(existing.is_none());
+        conn.execute(
+            r#"INSERT INTO "System_Settings" ("key", "value", "updated_at") VALUES ('allow_negative_stock_sale', 'true', CURRENT_TIMESTAMP)"#,
+            [],
+        )
+        .unwrap();
+
+        // Update (upsert)
+        conn.execute(
+            r#"UPDATE "System_Settings" SET "value" = 'false', "updated_at" = CURRENT_TIMESTAMP WHERE "key" = 'allow_negative_stock_sale'"#,
+            [],
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "System_Settings" WHERE "key" = 'allow_negative_stock_sale'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "Não deve duplicar ao atualizar");
+
+        let value: String = conn
+            .query_row(
+                r#"SELECT "value" FROM "System_Settings" WHERE "key" = 'allow_negative_stock_sale'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "false");
+    }
+
+    #[test]
+    fn set_system_setting_normalizes_boolean_value() {
+        let normalized = normalize_setting_value("allow_negative_stock_sale", "true");
+        assert_eq!(normalized, "true");
+        let normalized2 = normalize_setting_value("allow_negative_stock_sale", "false");
+        assert_eq!(normalized2, "false");
+        // non-"true" values normalize to "false"
+        let normalized3 = normalize_setting_value("allow_negative_stock_sale", "yes");
+        assert_eq!(normalized3, "false");
     }
 
     #[test]

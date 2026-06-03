@@ -166,7 +166,7 @@ O sistema SHALL permitir, no fechamento, escolher para cada pagamento o método 
 
 ### Requirement: Fechamento de pedido com pagamento
 
-O sistema SHALL registrar o pagamento de um pedido — incluindo os descontos aplicados no fechamento, a modalidade/parcelas de cada pagamento e a taxa retida — e mudar seu status para `closed`, disparando as ordens de produção e consumindo automaticamente o estoque dos itens vendidos. Ao fechar, o sistema SHALL aplicar os descontos informados aos itens, recalcular o `total_value` e validar o pagamento contra esse total descontado, tudo em uma transação. O consumo de estoque segue a regra: se o item vendável possui componentes em `Product_Components`, consome os insumos da ficha técnica; caso contrário, consome o próprio produto (produto de revenda).
+O sistema SHALL registrar o pagamento de um pedido — incluindo os descontos aplicados no fechamento, a modalidade/parcelas de cada pagamento e a taxa retida — e mudar seu status para `closed`, disparando as ordens de produção e consumindo automaticamente o estoque dos itens vendidos. Ao fechar, o sistema SHALL aplicar os descontos informados aos itens, recalcular o `total_value` e validar o pagamento contra esse total descontado, tudo em uma transação. O consumo de estoque segue a regra: se o item vendável possui componentes em `Product_Components`, consome os insumos da ficha técnica; caso contrário, consome o próprio produto (produto de revenda). A emissão de avisos de estoque insuficiente SHALL ser condicionada ao parâmetro `allow_negative_stock_sale`: quando `'false'` (padrão), o sistema emite avisos; quando `'true'`, o sistema prossegue silenciosamente. Em ambos os casos a venda prossegue e a baixa de estoque ocorre.
 
 #### Scenario: Aplicação de desconto no fechamento
 - **WHEN** o command `close_sale` é invocado com a lista de itens contendo `discount` por item
@@ -204,13 +204,17 @@ O sistema SHALL registrar o pagamento de um pedido — incluindo os descontos ap
 - **WHEN** o pedido é fechado e um item vendável não possui componentes em `Product_Components`
 - **THEN** o sistema cria o `Production_Order` normalmente e insere um `Stock_Movement (type='out', motive='venda', product_id = item.product_id, quantity = sale_quantity)` baixando o saldo do próprio produto, sem inserir `Production_Inputs` para esse item
 
-#### Scenario: Estoque insuficiente de insumo
-- **WHEN** ao fechar a venda, a quantidade disponível de um insumo em `Stock` é menor que a quantidade a consumir
+#### Scenario: Estoque insuficiente de insumo com avisos habilitados
+- **WHEN** ao fechar a venda, a quantidade disponível de um insumo em `Stock` é menor que a quantidade a consumir e `allow_negative_stock_sale = 'false'`
 - **THEN** o sistema prossegue com o fechamento e o consumo (estoque fica negativo), e retorna uma lista de avisos identificando os insumos com estoque insuficiente para exibição no frontend
 
-#### Scenario: Estoque insuficiente de produto de revenda
-- **WHEN** ao fechar a venda, um item vendável sem componentes tem `Stock.current_quantity` menor que `sale_quantity`
+#### Scenario: Estoque insuficiente de produto de revenda com avisos habilitados
+- **WHEN** ao fechar a venda, um item vendável sem componentes tem `Stock.current_quantity` menor que `sale_quantity` e `allow_negative_stock_sale = 'false'`
 - **THEN** o sistema prossegue com o fechamento e a baixa (estoque fica negativo), e inclui na lista de avisos o produto com estoque insuficiente
+
+#### Scenario: Venda com estoque negativo permitida sem avisos
+- **WHEN** ao fechar a venda, um ou mais itens/insumos têm estoque insuficiente e `allow_negative_stock_sale = 'true'`
+- **THEN** o sistema prossegue com o fechamento e a baixa (estoque fica negativo) sem incluir avisos de estoque insuficiente na lista retornada
 
 ### Requirement: Listagem de métodos de pagamento
 

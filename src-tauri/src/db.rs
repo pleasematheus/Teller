@@ -5,7 +5,7 @@ const SCHEMA: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/d
 
 // Versão do schema do banco. Incrementar manualmente quando schema.sql mudar de
 // forma incompatível. Consumida pela ferramenta de atualização dedicada via App_Meta.
-const DB_VERSION: &str = "2";
+const DB_VERSION: &str = "3";
 
 pub fn open_database(path: &std::path::Path) -> Result<Connection, duckdb::Error> {
     match Connection::open(path) {
@@ -52,6 +52,13 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    conn.execute(
+        r#"INSERT INTO "System_Settings" ("key", "value", "updated_at")
+           VALUES ('allow_negative_stock_sale', 'false', CURRENT_TIMESTAMP)"#,
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -81,6 +88,36 @@ mod app_meta_tests {
 
         assert_eq!(db_version, DB_VERSION);
         assert!(!app_version.is_empty());
+    }
+
+    #[test]
+    fn init_schema_creates_system_settings_with_seed() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        let value: String = conn
+            .query_row(
+                r#"SELECT "value" FROM "System_Settings" WHERE "key" = 'allow_negative_stock_sale'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "false");
+    }
+
+    #[test]
+    fn init_schema_app_meta_only_has_version_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "App_Meta" WHERE "key" NOT IN ('db_version', 'app_version')"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "App_Meta deve conter apenas db_version e app_version");
     }
 }
 

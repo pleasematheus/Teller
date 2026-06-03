@@ -251,3 +251,9 @@ CREATE TABLE IF NOT EXISTS "App_Meta" (
     "key"   TEXT NOT NULL PRIMARY KEY,
     "value" TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS "System_Settings" (
+    "key"        TEXT      NOT NULL PRIMARY KEY,
+    "value"      TEXT      NOT NULL,
+    "updated_at" TIMESTAMP NOT NULL
+);
