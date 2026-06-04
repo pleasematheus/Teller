@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS "Purchases" (
     "id"         INTEGER       DEFAULT nextval('purchases_id_seq') PRIMARY KEY,
     "freight"    DECIMAL(10,2) NOT NULL DEFAULT 0,
     "total_cost" DECIMAL(10,2) NOT NULL DEFAULT 0,
+    "status"     VARCHAR       NOT NULL DEFAULT 'open',
     "created_at" TIMESTAMP     NOT NULL
 );
 
@@ -89,10 +90,11 @@ CREATE TABLE IF NOT EXISTS "Purchase_Items" (
     "product_id"    INTEGER       NOT NULL,
     "quantity"      DECIMAL(10,4) NOT NULL,
     "unit_cost"     DECIMAL(10,2) NOT NULL,
-    "box_qty"       DECIMAL(10,4),
+    "final_price"   DECIMAL(10,2) NOT NULL DEFAULT 0,
     "unit_qty"      DECIMAL(10,4),
     "creates_stock" BOOLEAN       NOT NULL DEFAULT TRUE,
     "loss_rate"     DECIMAL(5,4),
+    "loss_mode"     VARCHAR       NOT NULL DEFAULT 'manual',
     "created_at"    TIMESTAMP     NOT NULL,
     FOREIGN KEY ("purchase_id") REFERENCES "Purchases" ("id"),
     FOREIGN KEY ("product_id")  REFERENCES "Products"  ("id")

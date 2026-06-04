@@ -5,7 +5,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ProductCommand } from "@/components/ui/ProductCommand"
 import type { Product, PurchaseItemPayload, PricingRates } from "@/types/product"
+import type { PurchaseDraft } from "@/types/stock"
 import { computePrice } from "@/lib/pricing"
+import { computeUnitQtyFactor, computeStockQty } from "@/lib/purchaseConversion"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -45,10 +47,9 @@ const newItem = (): ItemState => ({
 
 function stockQty(item: ItemState): number {
   const qty = parseFloat(item.quantity) || 0
-  const bq = parseFloat(item.boxQty)
-  const uq = parseFloat(item.unitQty)
-  if (item.showConversion && bq > 0 && uq > 0) return qty * (uq / bq)
-  return qty
+  if (!item.showConversion) return qty
+  const factor = computeUnitQtyFactor(parseFloat(item.unitQty), parseFloat(item.boxQty))
+  return computeStockQty(qty, factor)
 }
 
 function computeFreightShare(item: ItemState, freightVal: number, items: ItemState[]): number {
@@ -76,9 +77,9 @@ function computeSuggestedPrice(
   return computePrice(effectiveLotCost, lossRate, rates, item.productProfitMargin).final_price
 }
 
-type Props = { onSaved: () => void }
+type Props = { onSaved: () => void; purchaseId?: number; onCancel?: () => void }
 
-export function PurchaseForm({ onSaved }: Props) {
+export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
   const [products, setProducts] = useState<Product[]>([])
   const [rates, setRates] = useState<PricingRates | null>(null)
   const [freight, setFreight] = useState("0")
@@ -87,11 +88,42 @@ export function PurchaseForm({ onSaved }: Props) {
   const [activeRowId, setActiveRowId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [loadingDraft, setLoadingDraft] = useState(false)
 
   useEffect(() => {
     invoke<Product[]>("list_products").then(setProducts).catch(console.error)
     invoke<PricingRates>("get_pricing_rates").then(setRates).catch(console.error)
   }, [])
+
+  useEffect(() => {
+    if (!purchaseId) return
+    setLoadingDraft(true)
+    setError(null)
+    invoke<PurchaseDraft>("get_purchase_draft", { purchaseId })
+      .then((draft) => {
+        setFreight(String(draft.freight))
+        setItems(
+          draft.items.map((di) => ({
+            id: crypto.randomUUID(),
+            productId: di.product_id,
+            productName: di.product_name,
+            productUnit: di.product_unit,
+            quantity: String(di.quantity),
+            unitCost: String(di.unit_cost),
+            boxQty: "1",
+            unitQty: di.unit_qty != null ? String(di.unit_qty) : "",
+            showConversion: di.unit_qty != null,
+            lossRatePct: ((di.loss_rate ?? 0) * 100).toFixed(2),
+            lossMode: (di.loss_mode === "auto" ? "auto" : "manual") as "auto" | "manual",
+            finalPrice: String(di.final_price),
+            finalPriceDirty: true,
+            productProfitMargin: undefined,
+          }))
+        )
+      })
+      .catch((err) => setError(String(err)))
+      .finally(() => setLoadingDraft(false))
+  }, [purchaseId])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -150,13 +182,16 @@ export function PurchaseForm({ onSaved }: Props) {
           ? computeSuggestedPrice(i, freightShare, rates)
           : 0
 
+      const unitQtyFactor = i.showConversion
+        ? computeUnitQtyFactor(parseFloat(i.unitQty), parseFloat(i.boxQty))
+        : null
+
       return {
         product_id: i.productId as number,
         quantity: qty,
         unit_cost: cost,
         final_price: fp,
-        box_qty: i.showConversion && i.boxQty ? parseFloat(i.boxQty) : null,
-        unit_qty: i.showConversion && i.unitQty ? parseFloat(i.unitQty) : null,
+        unit_qty: unitQtyFactor,
         loss_rate: i.lossMode === "manual" && !isNaN(lossRate) ? lossRate / 100 : null,
         loss_mode: i.lossMode,
       }
@@ -168,12 +203,13 @@ export function PurchaseForm({ onSaved }: Props) {
 
     setSaving(true)
     try {
-      await invoke("create_purchase", {
-        freight: freightVal,
-        items: parsed,
-      })
-      setItems([newItem()])
-      setFreight("0")
+      if (purchaseId) {
+        await invoke("update_purchase", { purchaseId, freight: freightVal, items: parsed })
+      } else {
+        await invoke("create_purchase", { freight: freightVal, items: parsed })
+        setItems([newItem()])
+        setFreight("0")
+      }
       onSaved()
     } catch (err) {
       setError(String(err))
@@ -428,11 +464,19 @@ export function PurchaseForm({ onSaved }: Props) {
           <span className="font-semibold text-teller-text">{brl.format(total)}</span>
         </div>
 
+        {loadingDraft && <p className="text-sm text-teller-muted">Carregando...</p>}
         {error && <p className="text-sm text-red-500">{error}</p>}
 
-        <Button type="submit" disabled={saving}>
-          {saving ? "Registrando..." : "Registrar compra"}
-        </Button>
+        <div className="flex gap-3">
+          {onCancel && (
+            <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
+              Cancelar
+            </Button>
+          )}
+          <Button type="submit" disabled={saving || loadingDraft}>
+            {saving ? "Salvando..." : "Salvar compra"}
+          </Button>
+        </div>
       </form>
 
       <ProductCommand

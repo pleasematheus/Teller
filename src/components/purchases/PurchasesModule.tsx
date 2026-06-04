@@ -11,6 +11,22 @@ const TABS: { value: Tab; label: string }[] = [
 
 export function PurchasesModule() {
   const [tab, setTab] = useState<Tab>("nova")
+  const [editingId, setEditingId] = useState<number | null>(null)
+
+  const switchTab = (t: Tab) => {
+    setTab(t)
+    if (t !== "nova") setEditingId(null)
+  }
+
+  const handleEdit = (id: number) => {
+    setEditingId(id)
+    setTab("nova")
+  }
+
+  const handleDone = () => {
+    setEditingId(null)
+    setTab("historico")
+  }
 
   return (
     <div className="flex flex-1 flex-col">
@@ -18,7 +34,7 @@ export function PurchasesModule() {
         {TABS.map(({ value, label }) => (
           <button
             key={value}
-            onClick={() => setTab(value)}
+            onClick={() => switchTab(value)}
             className={[
               "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
               tab === value
@@ -33,10 +49,14 @@ export function PurchasesModule() {
 
       {tab === "nova" ? (
         <div className="overflow-y-auto flex-1">
-          <PurchaseForm onSaved={() => setTab("historico")} />
+          <PurchaseForm
+            purchaseId={editingId ?? undefined}
+            onSaved={handleDone}
+            onCancel={editingId != null ? handleDone : undefined}
+          />
         </div>
       ) : (
-        <PurchaseHistory />
+        <PurchaseHistory onEdit={handleEdit} onDeleted={() => {}} />
       )}
     </div>
   )

@@ -30,11 +30,11 @@ O sistema SHALL calcular e exibir, para cada insumo, a quantidade estimada de pr
 
 ### Requirement: Registro de compra multi-item
 
-O sistema SHALL registrar uma compra com múltiplos itens em uma única operação atômica, criando automaticamente as movimentações de entrada em estoque para cada item com `creates_stock = true`. Para cada item, o sistema SHALL **fixar a taxa de perda do insumo**: calcula a taxa sugerida (ver "Snapshot da taxa de perda na compra"), aceita a escolha de modo (`auto`/`manual`) com override manual por item, grava o valor escolhido em `Purchase_Items.loss_rate` e atualiza `Products.expected_loss_rate` e `Products.loss_mode` do insumo. Para cada item, o sistema SHALL também **fixar o custo do insumo** recalculando `Products.cost_price` como **média ponderada por quantidade** (ver "Custo médio ponderado do insumo na compra"). A seleção de produto de cada linha SHALL usar o combobox de seleção de produto (ver capability `product-search`) no lugar do `<select>` nativo. Cada linha de item SHALL expor um campo de **preço de venda editável** (`final_price`, o que o cliente paga), pré-preenchido com o **preço sugerido** pela fórmula de precificação existente (`computePrice`) a partir do custo efetivo do lote (mercadoria + frete rateado, por unidade de estoque), da taxa de perda do insumo e das taxas globais; o operador SHALL poder sobrescrever esse valor. Ao salvar, `create_purchase` SHALL persistir o `final_price` informado em `Products` e derivar `markup` e `profit_margin` como snapshot do instante do salvamento (`cmv = cost_price/(1 − expected_loss_rate)`, `markup = final_price/cmv`, `profit_margin = 1 − cv − df − investment_rate − cmv/final_price`), usando o `cost_price` resultante da compra.
+O sistema SHALL registrar uma compra com múltiplos itens como **rascunho** em uma única operação, criando o registro em `Purchases` com `status = 'open'` e inserindo cada item em `Purchase_Items`, **sem** criar movimentações de estoque e **sem** alterar custo, preço ou taxa de perda dos produtos. A aplicação desses efeitos ocorre apenas no fechamento (ver "Fechamento de compra"). Cada item SHALL guardar `quantity`, `unit_cost`, o fator de conversão opcional `unit_qty` e o `final_price` pretendido. A conversão de unidade de compra para unidade de estoque SHALL usar o fator único `unit_qty`: a quantidade que entrará em estoque ao fechar é `quantity * unit_qty` quando `unit_qty` está preenchido, ou `quantity` quando `unit_qty` é nulo. A seleção de produto de cada linha SHALL usar o combobox de seleção de produto (ver capability `product-search`). Cada linha SHALL expor um campo de preço de venda editável (`final_price`) pré-preenchido pelo preço sugerido (`computePrice`); o operador SHALL poder sobrescrevê-lo. Edição de itens e do frete SHALL ser permitida apenas enquanto `status = 'open'`.
 
-#### Scenario: Compra com frete e múltiplos itens
+#### Scenario: Criação de rascunho de compra
 - **WHEN** o comando `create_purchase` é invocado com `freight >= 0` e ao menos um item válido
-- **THEN** o sistema insere em `Purchases`, insere cada item em `Purchase_Items` (incluindo `loss_rate`), cria `Stock_Movements (movement_type='in', motive='compra')` para cada item com `creates_stock = true`, atualiza `expected_loss_rate` e `loss_mode` do produto, atualiza `cost_price` pela média ponderada e atualiza `final_price`, `markup` e `profit_margin` do produto — tudo em uma transação
+- **THEN** o sistema insere em `Purchases` com `status = 'open'` e insere cada item em `Purchase_Items`, sem criar `Stock_Movements` e sem alterar `cost_price`, `final_price`, `markup`, `profit_margin`, `expected_loss_rate` ou `loss_mode` de nenhum produto
 
 #### Scenario: Preço de venda sugerido por item
 - **WHEN** o operador define produto, quantidade e custo de uma linha (e o frete da compra)
@@ -44,25 +44,53 @@ O sistema SHALL registrar uma compra com múltiplos itens em uma única operaç�
 - **WHEN** o operador edita o campo de preço de venda de uma linha
 - **THEN** o valor informado passa a ser o `final_price` enviado no payload de `create_purchase` para aquele item, ignorando o preço sugerido
 
-#### Scenario: Persistência do preço de venda no produto
-- **WHEN** uma compra é salva com `final_price` por item
-- **THEN** o `Products.final_price` do insumo passa a ser o valor informado e `Products.markup`/`Products.profit_margin` são derivados do `final_price` e do `cost_price` resultante, conforme a regra de snapshot de precificação
-
 #### Scenario: Seleção de produto via combobox
 - **WHEN** o operador abre o seletor de produto de uma linha de item e escolhe um produto no combobox
 - **THEN** a linha passa a exibir o nome do produto escolhido, o `productId` da linha é definido e o sistema dispara `get_product_loss_rate` para preencher a perda sugerida daquela linha
 
-#### Scenario: Conversão caixa para unidades
-- **WHEN** um item de compra tem `box_qty` e `unit_qty` preenchidos
-- **THEN** a quantidade movimentada em estoque é `quantity × (unit_qty ÷ box_qty)`
+#### Scenario: Conversão por fator único
+- **WHEN** um item de compra tem `unit_qty` preenchido
+- **THEN** a quantidade considerada para estoque no fechamento é `quantity * unit_qty`
 
 #### Scenario: Sem conversão de unidade
 - **WHEN** um item de compra não tem `box_qty` e `unit_qty` preenchidos
 - **THEN** a quantidade movimentada em estoque é igual à `quantity` do item
 
+#### Scenario: Edição bloqueada após fechamento
+- **WHEN** uma compra tem `status = 'closed'` e o operador tenta alterar seus itens ou frete
+- **THEN** o sistema rejeita a alteração
+
 #### Scenario: Item com quantidade zero ou negativa
 - **WHEN** qualquer item da compra tem `quantity <= 0`
 - **THEN** o sistema retorna erro de validação sem criar nenhum registro
+
+### Requirement: Fechamento de compra
+
+O sistema SHALL fornecer o comando `close_purchase(purchase_id)` que, em uma única transação, aplica os efeitos de uma compra em rascunho e marca `status = 'closed'`. Para cada item com `creates_stock = true`, o sistema SHALL: fixar a taxa de perda do insumo (modo `auto`/`manual` com override por item, gravando em `Purchase_Items.loss_rate` e atualizando `Products.expected_loss_rate` e `Products.loss_mode`); recalcular `Products.cost_price` como média ponderada por quantidade incluindo o frete rateado proporcional ao valor da linha; persistir `Products.final_price` e derivar `markup` e `profit_margin` como snapshot (`cmv = cost_price/(1 − expected_loss_rate)`, `markup = final_price/cmv`, `profit_margin = 1 − cv − df − investment_rate − cmv/final_price`); e criar `Stock_Movements (movement_type='in', motive='compra')` com quantidade `quantity * unit_qty` (ou `quantity` quando `unit_qty` é nulo). O fechamento SHALL ser idempotente em relação ao estado: uma compra já `closed` não SHALL ser fechada novamente.
+
+#### Scenario: Fechamento aplica estoque e custo
+- **WHEN** `close_purchase` é invocado para uma compra `open` com itens válidos
+- **THEN** o sistema cria `Stock_Movements ('in','compra')` para cada item, atualiza `expected_loss_rate`, `loss_mode`, `cost_price` (média ponderada), `final_price`, `markup` e `profit_margin` dos produtos, e marca `Purchases.status = 'closed'` — tudo em uma transação
+
+#### Scenario: Frete rateado entra no custo
+- **WHEN** uma compra com `freight > 0` e múltiplos itens é fechada
+- **THEN** cada `cost_price` recalculado inclui a parcela de frete proporcional ao valor da linha (`freight * line_value / subtotal`)
+
+#### Scenario: Tentativa de fechar compra já fechada
+- **WHEN** `close_purchase` é invocado para uma compra cujo `status` já é `closed`
+- **THEN** o sistema retorna erro sem aplicar efeitos duplicados
+
+#### Scenario: Falha no fechamento faz rollback
+- **WHEN** qualquer passo do fechamento falha
+- **THEN** a transação sofre rollback, nenhuma movimentação é criada e o `status` permanece `open`
+
+### Requirement: Status da compra na listagem
+
+O sistema SHALL permitir listar compras filtrando por `status`, expondo o `status` de cada compra para a interface diferenciar rascunhos de compras fechadas.
+
+#### Scenario: Listagem filtrada por status
+- **WHEN** `list_purchases` é invocado com um `status` (`open` ou `closed`)
+- **THEN** o sistema retorna apenas as compras naquele status, incluindo o campo `status` em cada registro
 
 ### Requirement: Lançamento manual de perda ou ajuste
 
@@ -185,9 +213,9 @@ O sistema SHALL recalcular o `Products.cost_price` de cada insumo comprado como 
 - **WHEN** uma compra com `freight > 0` é registrada e o somatório dos valores de linha é zero
 - **THEN** nenhuma parcela de frete é somada ao `cost_price` de qualquer insumo e o `freight` permanece apenas em `Purchases.total_cost`
 
-#### Scenario: Conversão caixa para unidade no custo unitário
-- **WHEN** um item de compra tem `box_qty` e `unit_qty` preenchidos (a quantidade de estoque difere da quantidade comprada)
-- **THEN** o custo unitário de estoque do lote é `(quantity × unit_cost + frete_rateado) ÷ (quantity × (unit_qty ÷ box_qty))`, mantendo a média ponderada coerente com a unidade de estoque
+#### Scenario: Conversão por fator único no custo unitário
+- **WHEN** um item de compra tem `unit_qty` preenchido (a quantidade de estoque difere da quantidade comprada)
+- **THEN** o custo unitário de estoque do lote é `(quantity × unit_cost + frete_rateado) ÷ (quantity × unit_qty)`, mantendo a média ponderada coerente com a unidade de estoque
 
 #### Scenario: Custo congelado entre compras
 - **WHEN** movimentos de venda ou perda ocorrem após uma compra, sem nova compra do insumo
