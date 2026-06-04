@@ -28,7 +28,6 @@ export interface PurchaseItem {
   product_id: number
   quantity: number
   unit_cost: number
-  box_qty?: number | null
   unit_qty?: number | null
 }
 
@@ -36,5 +35,24 @@ export interface Purchase {
   id: number
   freight: number
   total_cost: number
+  status: string
   created_at: string
+}
+
+export interface PurchaseDraftItem {
+  product_id: number
+  product_name: string
+  product_unit: string
+  quantity: number
+  unit_cost: number
+  unit_qty: number | null
+  loss_rate: number
+  loss_mode: string
+  final_price: number
+}
+
+export interface PurchaseDraft {
+  id: number
+  freight: number
+  items: PurchaseDraftItem[]
 }
