@@ -40,7 +40,7 @@ export interface Purchase {
 }
 
 export interface PurchaseDraftItem {
-  product_id: number
+  product_id: number | null
   product_name: string
   product_unit: string
   quantity: number
@@ -49,6 +49,9 @@ export interface PurchaseDraftItem {
   loss_rate: number
   loss_mode: string
   final_price: number
+  is_new_product: boolean
+  new_product_description: string | null
+  new_product_sellable: boolean | null
 }
 
 export interface PurchaseDraft {

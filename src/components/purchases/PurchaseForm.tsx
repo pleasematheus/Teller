@@ -3,11 +3,13 @@ import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ProductCommand } from "@/components/ui/ProductCommand"
-import type { Product, PurchaseItemPayload, PricingRates } from "@/types/product"
+import { ProductCommand, type NewProductDraft } from "@/components/ui/ProductCommand"
+import type { Product, PricingRates } from "@/types/product"
 import type { PurchaseDraft } from "@/types/stock"
+import type { UnitOfMeasure } from "@/types/units"
 import { computePrice } from "@/lib/pricing"
 import { computeUnitQtyFactor, computeStockQty } from "@/lib/purchaseConversion"
+import { buildPurchaseItemPayload } from "@/lib/buildPurchaseItemPayload"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -16,9 +18,13 @@ type ItemState = {
   productId: number | ""
   productName: string
   productUnit: string
+  isNewProduct: boolean
+  newProductName: string
+  newProductUnit: string
+  newProductDescription: string
+  newProductSellable: boolean
   quantity: string
   unitCost: string
-  boxQty: string
   unitQty: string
   showConversion: boolean
   lossRatePct: string
@@ -33,9 +39,13 @@ const newItem = (): ItemState => ({
   productId: "",
   productName: "",
   productUnit: "",
+  isNewProduct: false,
+  newProductName: "",
+  newProductUnit: "",
+  newProductDescription: "",
+  newProductSellable: false,
   quantity: "",
   unitCost: "",
-  boxQty: "",
   unitQty: "",
   showConversion: false,
   lossRatePct: "0",
@@ -48,7 +58,7 @@ const newItem = (): ItemState => ({
 function stockQty(item: ItemState): number {
   const qty = parseFloat(item.quantity) || 0
   if (!item.showConversion) return qty
-  const factor = computeUnitQtyFactor(parseFloat(item.unitQty), parseFloat(item.boxQty))
+  const factor = computeUnitQtyFactor(parseFloat(item.unitQty), 0)
   return computeStockQty(qty, factor)
 }
 
@@ -81,6 +91,7 @@ type Props = { onSaved: () => void; purchaseId?: number; onCancel?: () => void }
 
 export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
   const [products, setProducts] = useState<Product[]>([])
+  const [units, setUnits] = useState<UnitOfMeasure[]>([])
   const [rates, setRates] = useState<PricingRates | null>(null)
   const [freight, setFreight] = useState("0")
   const [items, setItems] = useState<ItemState[]>([newItem()])
@@ -93,6 +104,7 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
   useEffect(() => {
     invoke<Product[]>("list_products").then(setProducts).catch(console.error)
     invoke<PricingRates>("get_pricing_rates").then(setRates).catch(console.error)
+    invoke<UnitOfMeasure[]>("list_units_of_measure").then(setUnits).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -105,12 +117,16 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
         setItems(
           draft.items.map((di) => ({
             id: crypto.randomUUID(),
-            productId: di.product_id,
+            productId: di.product_id ?? "",
             productName: di.product_name,
             productUnit: di.product_unit,
+            isNewProduct: di.is_new_product,
+            newProductName: di.is_new_product ? di.product_name : "",
+            newProductUnit: di.is_new_product ? di.product_unit : "",
+            newProductDescription: di.new_product_description ?? "",
+            newProductSellable: di.new_product_sellable ?? false,
             quantity: String(di.quantity),
             unitCost: String(di.unit_cost),
-            boxQty: "1",
             unitQty: di.unit_qty != null ? String(di.unit_qty) : "",
             showConversion: di.unit_qty != null,
             lossRatePct: ((di.loss_rate ?? 0) * 100).toFixed(2),
@@ -152,11 +168,30 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
       productName: product.name,
       productUnit: product.unit,
       productProfitMargin: product.profit_margin,
+      isNewProduct: false,
+      newProductName: "",
       finalPriceDirty: false,
     })
     invoke<number>("get_product_loss_rate", { productId: product.id })
       .then((rate) => update(targetId, { lossRatePct: String((rate * 100).toFixed(2)) }))
       .catch(() => {})
+  }
+
+  const handleNewProduct = (draft: NewProductDraft) => {
+    const targetId = activeRowId ?? items[0]?.id
+    if (!targetId) return
+    update(targetId, {
+      productId: "",
+      productName: draft.name,
+      productUnit: draft.unit,
+      isNewProduct: true,
+      newProductName: draft.name,
+      newProductUnit: draft.unit,
+      newProductDescription: draft.description,
+      newProductSellable: draft.sellable,
+      lossRatePct: "0",
+      finalPriceDirty: false,
+    })
   }
 
   const freightVal = parseFloat(freight) || 0
@@ -169,36 +204,13 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
     e.preventDefault()
     setError(null)
 
-    const parsed = items.map((i): PurchaseItemPayload | null => {
-      const qty = parseFloat(i.quantity)
-      const cost = parseFloat(i.unitCost)
-      if (!i.productId || !qty || qty <= 0 || !cost || cost < 0) return null
-      const lossRate = parseFloat(i.lossRatePct)
-
+    const parsed = items.map((i) => {
       const freightShare = computeFreightShare(i, freightVal, items)
-      const fp = i.finalPriceDirty
-        ? parseFloat(i.finalPrice) || 0
-        : rates
-          ? computeSuggestedPrice(i, freightShare, rates)
-          : 0
-
-      const unitQtyFactor = i.showConversion
-        ? computeUnitQtyFactor(parseFloat(i.unitQty), parseFloat(i.boxQty))
-        : null
-
-      return {
-        product_id: i.productId as number,
-        quantity: qty,
-        unit_cost: cost,
-        final_price: fp,
-        unit_qty: unitQtyFactor,
-        loss_rate: i.lossMode === "manual" && !isNaN(lossRate) ? lossRate / 100 : null,
-        loss_mode: i.lossMode,
-      }
+      return buildPurchaseItemPayload(i, freightShare, rates)
     })
 
     if (parsed.some((i) => i === null)) {
-      return setError("Preencha produto, quantidade e custo em todos os itens.")
+      return setError("Preencha produto (ou dados do novo produto), quantidade e custo em todos os itens.")
     }
 
     setSaving(true)
@@ -232,7 +244,6 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
             value={freight}
             onChange={(e) => {
               setFreight(e.target.value)
-              // Reset dirty flags so suggestions recalculate with new freight
               setItems((prev) => prev.map((i) => ({ ...i, finalPriceDirty: false })))
             }}
             className="max-w-xs"
@@ -276,7 +287,14 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
                 className="rounded-lg border border-teller-border bg-teller-card p-4 flex flex-col gap-3"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-teller-muted font-medium">Item {idx + 1}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-teller-muted font-medium">Item {idx + 1}</span>
+                    {item.isNewProduct && (
+                      <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-teller-accent/15 text-teller-accent">
+                        novo
+                      </span>
+                    )}
+                  </div>
                   {items.length > 1 && (
                     <button
                       type="button"
@@ -369,23 +387,12 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
                   onClick={() => update(item.id, { showConversion: !item.showConversion })}
                   className="text-xs text-teller-accent hover:underline text-left"
                 >
-                  {item.showConversion ? "▲ Ocultar conversão" : "▼ Conversão caixa → unidade"}
+                  {item.showConversion ? "▲ Ocultar conversao" : "▼ Conversao caixa → unidade"}
                 </button>
 
                 {item.showConversion && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-teller-muted">Qtd por caixa</label>
-                      <Input
-                        type="number"
-                        min={0.0001}
-                        step="any"
-                        value={item.boxQty}
-                        onChange={(e) => update(item.id, { boxQty: e.target.value, finalPriceDirty: false })}
-                        placeholder="1"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-1 max-w-xs">
                       <label className="text-xs text-teller-muted">Unidades por caixa</label>
                       <Input
                         type="number"
@@ -396,9 +403,9 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
                         placeholder="1"
                       />
                     </div>
-                    {item.boxQty && item.unitQty && item.quantity && (
-                      <p className="col-span-2 text-xs text-teller-muted">
-                        Entrará em estoque:{" "}
+                    {item.unitQty && item.quantity && (
+                      <p className="text-xs text-teller-muted">
+                        Entrara em estoque:{" "}
                         <span className="text-teller-text font-medium">
                           {stockQty(item).toFixed(2)} {item.productUnit || "unidades"}
                         </span>
@@ -411,7 +418,7 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
                   <div className="flex flex-col gap-1 flex-1">
                     <div className="flex items-center gap-2">
                       <label className="text-xs text-teller-muted">
-                        Preço de venda{item.productUnit ? ` (R$/${item.productUnit})` : " (R$)"}
+                        Preco de venda{item.productUnit ? ` (R$/${item.productUnit})` : " (R$)"}
                       </label>
                       {!item.finalPriceDirty && suggestedPrice > 0 && (
                         <span className="text-xs text-teller-accent/70">calculado</span>
@@ -484,6 +491,8 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
         onOpenChange={setSearchOpen}
         products={products}
         onSelect={handleProductSelected}
+        units={units}
+        onCreateNew={handleNewProduct}
       />
     </>
   )
