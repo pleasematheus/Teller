@@ -85,17 +85,21 @@ CREATE TABLE IF NOT EXISTS "Purchases" (
 
 CREATE SEQUENCE IF NOT EXISTS purchase_items_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Purchase_Items" (
-    "id"            INTEGER       DEFAULT nextval('purchase_items_id_seq') PRIMARY KEY,
-    "purchase_id"   INTEGER       NOT NULL,
-    "product_id"    INTEGER       NOT NULL,
-    "quantity"      DECIMAL(10,4) NOT NULL,
-    "unit_cost"     DECIMAL(10,2) NOT NULL,
-    "final_price"   DECIMAL(10,2) NOT NULL DEFAULT 0,
-    "unit_qty"      DECIMAL(10,4),
-    "creates_stock" BOOLEAN       NOT NULL DEFAULT TRUE,
-    "loss_rate"     DECIMAL(5,4),
-    "loss_mode"     VARCHAR       NOT NULL DEFAULT 'manual',
-    "created_at"    TIMESTAMP     NOT NULL,
+    "id"                      INTEGER       DEFAULT nextval('purchase_items_id_seq') PRIMARY KEY,
+    "purchase_id"             INTEGER       NOT NULL,
+    "product_id"              INTEGER,
+    "quantity"                DECIMAL(10,4) NOT NULL,
+    "unit_cost"               DECIMAL(10,2) NOT NULL,
+    "final_price"             DECIMAL(10,2) NOT NULL DEFAULT 0,
+    "unit_qty"                DECIMAL(10,4),
+    "creates_stock"           BOOLEAN       NOT NULL DEFAULT TRUE,
+    "loss_rate"               DECIMAL(5,4),
+    "loss_mode"               VARCHAR       NOT NULL DEFAULT 'manual',
+    "new_product_name"        VARCHAR,
+    "new_product_unit"        VARCHAR,
+    "new_product_description" VARCHAR,
+    "new_product_sellable"    BOOLEAN,
+    "created_at"              TIMESTAMP     NOT NULL,
     FOREIGN KEY ("purchase_id") REFERENCES "Purchases" ("id"),
     FOREIGN KEY ("product_id")  REFERENCES "Products"  ("id")
 );

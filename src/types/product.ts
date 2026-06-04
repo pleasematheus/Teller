@@ -14,13 +14,17 @@ export interface Product {
 }
 
 export interface PurchaseItemPayload {
-  product_id: number
+  product_id: number | null
   quantity: number
   unit_cost: number
   final_price: number
   unit_qty: number | null
   loss_rate: number | null
   loss_mode: "auto" | "manual"
+  new_product_name?: string
+  new_product_unit?: string
+  new_product_description?: string
+  new_product_sellable?: boolean
 }
 
 export interface PricingRates {

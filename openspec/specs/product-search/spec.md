@@ -6,7 +6,7 @@ Combobox compartilhado de seleção de produto, usado em venda e compra. Fornece
 
 ### Requirement: Combobox de seleção de produto
 
-O sistema SHALL fornecer um componente de combobox compartilhado para selecionar um produto a partir de uma lista, com input de busca ancorado e flutuante (não no fluxo do documento), navegação por teclado e estado vazio explícito. O componente SHALL emitir o produto escolhido via callback `onSelect(product)` e não SHALL conter lógica de carrinho ou de linha de compra.
+O sistema SHALL fornecer um componente de combobox compartilhado para selecionar um produto a partir de uma lista, com input de busca ancorado e flutuante (não no fluxo do documento), navegação por teclado e estado vazio explícito. O componente SHALL emitir o produto escolhido via callback `onSelect(product)` e não SHALL conter lógica de carrinho ou de linha de compra. Quando o texto digitado não casa com nenhum produto, o componente SHALL oferecer uma ação de **criação de produto novo** que captura `name` (pré-preenchido com o texto digitado), `unit` (escolhida entre as unidades ativas fornecidas), `description` opcional e `sellable`, e emite esses dados via callback `onCreateNew(draft)` sem persistir o produto. O componente NÃO SHALL chamar comandos de criação de produto diretamente; a persistência é responsabilidade de quem consome o callback.
 
 #### Scenario: Lista ancorada e flutuante
 - **WHEN** o usuário abre o combobox
@@ -23,6 +23,14 @@ O sistema SHALL fornecer um componente de combobox compartilhado para selecionar
 #### Scenario: Estado vazio
 - **WHEN** o texto digitado não casa com nenhum produto
 - **THEN** a lista exibe uma mensagem de "nenhum produto encontrado" em vez de desaparecer silenciosamente
+
+#### Scenario: Ação de criar produto novo
+- **WHEN** o texto digitado não casa com nenhum produto e o usuário aciona "Criar novo: <texto>"
+- **THEN** o componente exibe um formulário inline com `name` pré-preenchido, seleção de `unit` entre as unidades ativas, campo de `description` e toggle `sellable`, e ao confirmar emite `onCreateNew` com esses dados sem persistir o produto
+
+#### Scenario: Cancelar criação de produto novo
+- **WHEN** o usuário está no formulário de criação de produto novo e cancela
+- **THEN** o componente volta para a lista de resultados sem emitir `onCreateNew`
 
 ### Requirement: Busca de produto insensível a acento e ranqueada
 

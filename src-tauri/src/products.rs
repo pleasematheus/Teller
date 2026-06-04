@@ -294,6 +294,32 @@ pub fn list_products(state: State<DbState>) -> Result<Vec<Product>, String> {
     Ok(products)
 }
 
+/// Creates a product inside an already-open transaction.
+/// Validates name (non-empty) and unit (active). Returns the new product id.
+/// initial fields: cost_price=0, markup=0, final_price=0, profit_margin=0,
+/// expected_loss_rate=0, loss_mode='manual', active=true.
+pub(crate) fn create_product_in_tx(
+    conn: &Connection,
+    name: &str,
+    description: Option<&str>,
+    unit: &str,
+    sellable: bool,
+) -> Result<i64, String> {
+    let name = name.trim();
+    validate_product(name, 0.0)?;
+    validate_unit(conn, unit, true)?;
+    conn.query_row(
+        r#"INSERT INTO "Products"
+           (name, description, active, sellable, cost_price, markup, final_price,
+            expected_loss_rate, unit, profit_margin, updated_at, created_at)
+           VALUES (?, ?, true, ?, 0.0, 0.0, 0.0, 0.0, ?, 0.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           RETURNING id"#,
+        params![name, description, sellable, unit],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn create_product(
     name: String,
@@ -307,19 +333,17 @@ pub fn create_product(
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
-    // cost_price starts at 0; the purchase event is the sole source of cost.
-    // expected_loss_rate and loss_mode are also owned by the purchase, not this form.
     validate_product(&name, 0.0)?;
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    validate_unit(&conn, &unit, true)?;
+    let id = create_product_in_tx(&conn, &name, description.as_deref(), &unit, sellable)?;
+    // Set the form-provided pricing fields (create_product_in_tx starts them at 0).
     conn.execute(
-        r#"INSERT INTO "Products"
-           (name, description, active, sellable, cost_price, markup, final_price,
-            expected_loss_rate, unit, profit_margin, updated_at, created_at)
-           VALUES (?, ?, ?, ?, 0.0, ?, ?, 0.0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-        params![name, description, active, sellable, markup, final_price,
-                unit, profit_margin],
+        r#"UPDATE "Products"
+           SET active = ?, markup = ?, final_price = ?, profit_margin = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?"#,
+        params![active, markup, final_price, profit_margin, id],
     )
     .map_err(|e| e.to_string())?;
 

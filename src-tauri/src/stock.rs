@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::DbState;
-use crate::products::{get_pricing_rates_raw, get_product_loss_rate_raw, validate_loss_mode};
+use crate::products::{create_product_in_tx, get_pricing_rates_raw, get_product_loss_rate_raw, validate_loss_mode};
 
 #[derive(Serialize)]
 pub struct StockItem {
@@ -13,19 +13,32 @@ pub struct StockItem {
     pub current_quantity: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct PurchaseItemInput {
-    pub product_id: i64,
+    pub product_id: Option<i64>,
     pub quantity: f64,
     pub unit_cost: f64,
     pub final_price: f64,
     pub unit_qty: Option<f64>,
     pub loss_rate: Option<f64>,
     pub loss_mode: Option<String>,
+    #[serde(default)]
+    pub new_product_name: Option<String>,
+    #[serde(default)]
+    pub new_product_unit: Option<String>,
+    #[serde(default)]
+    pub new_product_description: Option<String>,
+    #[serde(default)]
+    pub new_product_sellable: Option<bool>,
 }
 
 struct PurchaseItemRecord {
-    product_id: i64,
+    id: i64,
+    product_id: Option<i64>,
+    new_product_name: Option<String>,
+    new_product_unit: Option<String>,
+    new_product_description: Option<String>,
+    new_product_sellable: Option<bool>,
     quantity: f64,
     unit_cost: f64,
     unit_qty: Option<f64>,
@@ -67,7 +80,7 @@ pub struct Purchase {
 
 #[derive(Serialize)]
 pub struct PurchaseDraftItem {
-    pub product_id: i64,
+    pub product_id: Option<i64>,
     pub product_name: String,
     pub product_unit: String,
     pub quantity: f64,
@@ -76,6 +89,9 @@ pub struct PurchaseDraftItem {
     pub loss_rate: f64,
     pub loss_mode: String,
     pub final_price: f64,
+    pub is_new_product: bool,
+    pub new_product_description: Option<String>,
+    pub new_product_sellable: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -115,7 +131,8 @@ pub fn list_stock(state: State<DbState>) -> Result<Vec<StockItem>, String> {
 }
 
 // Creates a draft purchase (status='open') and stores items without applying effects.
-// Loss rate is resolved and frozen at draft creation time.
+// For existing products: loss rate is resolved and frozen at draft creation time.
+// For new products: product_id is NULL; pending fields are stored.
 fn create_purchase_draft(
     conn: &Connection,
     freight: f64,
@@ -138,21 +155,51 @@ fn create_purchase_draft(
         let loss_mode = item.loss_mode.as_deref().unwrap_or("manual");
         validate_loss_mode(loss_mode)?;
 
-        // Resolve and freeze loss rate at draft creation time.
-        let effective_loss = item.loss_rate
-            .unwrap_or_else(|| get_product_loss_rate_raw(conn, item.product_id));
+        let has_product_id = item.product_id.is_some();
+        let has_new_product = item.new_product_name.is_some() && item.new_product_unit.is_some();
+        if has_product_id == has_new_product {
+            return Err(
+                "Cada item deve ter exatamente um produto existente ou dados de produto novo"
+                    .to_string(),
+            );
+        }
 
-        conn.execute(
-            r#"INSERT INTO "Purchase_Items"
-               (purchase_id, product_id, quantity, unit_cost, final_price, unit_qty,
-                creates_stock, loss_rate, loss_mode, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, true, ?, ?, CURRENT_TIMESTAMP)"#,
-            params![
-                purchase_id, item.product_id, item.quantity, item.unit_cost,
-                item.final_price, item.unit_qty, effective_loss, loss_mode
-            ],
-        )
-        .map_err(|e| e.to_string())?;
+        if let Some(pid) = item.product_id {
+            let effective_loss = item.loss_rate
+                .unwrap_or_else(|| get_product_loss_rate_raw(conn, pid));
+            conn.execute(
+                r#"INSERT INTO "Purchase_Items"
+                   (purchase_id, product_id, quantity, unit_cost, final_price, unit_qty,
+                    creates_stock, loss_rate, loss_mode, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, true, ?, ?, CURRENT_TIMESTAMP)"#,
+                params![
+                    purchase_id, pid, item.quantity, item.unit_cost,
+                    item.final_price, item.unit_qty, effective_loss, loss_mode
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            let new_name = item.new_product_name.as_deref().unwrap();
+            let new_unit = item.new_product_unit.as_deref().unwrap();
+            let new_desc = item.new_product_description.as_deref();
+            let new_sellable = item.new_product_sellable.unwrap_or(false);
+            let creates_stock = !new_sellable;
+            let effective_loss = item.loss_rate.unwrap_or(0.0);
+            conn.execute(
+                r#"INSERT INTO "Purchase_Items"
+                   (purchase_id, product_id, quantity, unit_cost, final_price, unit_qty,
+                    creates_stock, loss_rate, loss_mode,
+                    new_product_name, new_product_unit, new_product_description,
+                    new_product_sellable, created_at)
+                   VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
+                params![
+                    purchase_id, item.quantity, item.unit_cost, item.final_price, item.unit_qty,
+                    creates_stock, effective_loss, loss_mode,
+                    new_name, new_unit, new_desc, new_sellable
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
 
     Ok(purchase_id)
@@ -160,6 +207,7 @@ fn create_purchase_draft(
 
 // Applies all purchase effects (stock, cost, price, loss) and marks status='closed'.
 // Must be called inside a BEGIN/COMMIT transaction.
+// New-product items (product_id IS NULL) are created first, then treated normally.
 fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
     let freight: f64 = conn
         .query_row(
@@ -171,35 +219,63 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
 
     let mut stmt = conn
         .prepare(r#"
-            SELECT product_id,
-                   CAST(quantity AS DOUBLE),
-                   CAST(unit_cost AS DOUBLE),
-                   CAST(unit_qty AS DOUBLE),
-                   creates_stock,
-                   CAST(COALESCE(loss_rate, 0.0) AS DOUBLE),
-                   loss_mode,
-                   CAST(final_price AS DOUBLE)
-            FROM "Purchase_Items"
-            WHERE purchase_id = ?
+            SELECT pi.id, pi.product_id,
+                   CAST(pi.quantity AS DOUBLE),
+                   CAST(pi.unit_cost AS DOUBLE),
+                   CAST(pi.unit_qty AS DOUBLE),
+                   pi.creates_stock,
+                   CAST(COALESCE(pi.loss_rate, 0.0) AS DOUBLE),
+                   pi.loss_mode,
+                   CAST(pi.final_price AS DOUBLE),
+                   pi.new_product_name,
+                   pi.new_product_unit,
+                   pi.new_product_description,
+                   pi.new_product_sellable
+            FROM "Purchase_Items" pi
+            WHERE pi.purchase_id = ?
         "#)
         .map_err(|e| e.to_string())?;
 
-    let items: Vec<PurchaseItemRecord> = stmt
+    let mut items: Vec<PurchaseItemRecord> = stmt
         .query_map(params![purchase_id], |row| {
             Ok(PurchaseItemRecord {
-                product_id: row.get(0)?,
-                quantity: row.get(1)?,
-                unit_cost: row.get(2)?,
-                unit_qty: row.get(3)?,
-                creates_stock: row.get(4)?,
-                loss_rate: row.get(5)?,
-                loss_mode: row.get(6)?,
-                final_price: row.get(7)?,
+                id: row.get(0)?,
+                product_id: row.get(1)?,
+                quantity: row.get(2)?,
+                unit_cost: row.get(3)?,
+                unit_qty: row.get(4)?,
+                creates_stock: row.get(5)?,
+                loss_rate: row.get(6)?,
+                loss_mode: row.get(7)?,
+                final_price: row.get(8)?,
+                new_product_name: row.get(9)?,
+                new_product_unit: row.get(10)?,
+                new_product_description: row.get(11)?,
+                new_product_sellable: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+
+    // Resolve new-product items: create the product, backfill product_id.
+    for item in &mut items {
+        if item.product_id.is_none() {
+            let name = item.new_product_name.as_deref()
+                .ok_or_else(|| "Item sem product_id e sem new_product_name".to_string())?;
+            let unit = item.new_product_unit.as_deref()
+                .ok_or_else(|| "Item sem product_id e sem new_product_unit".to_string())?;
+            let desc = item.new_product_description.as_deref();
+            let sellable = item.new_product_sellable.unwrap_or(false);
+            let new_id = create_product_in_tx(conn, name, desc, unit, sellable)?;
+            conn.execute(
+                r#"UPDATE "Purchase_Items" SET product_id = ? WHERE id = ?"#,
+                params![new_id, item.id],
+            )
+            .map_err(|e| e.to_string())?;
+            item.product_id = Some(new_id);
+        }
+    }
 
     let subtotal: f64 = items.iter().map(|i| i.quantity * i.unit_cost).sum();
     let rates = get_pricing_rates_raw(conn);
@@ -209,6 +285,8 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
             continue;
         }
 
+        let pid = item.product_id.expect("product_id resolved above");
+
         let stock_qty = item.unit_qty
             .map(|f| item.quantity * f)
             .unwrap_or(item.quantity);
@@ -216,7 +294,7 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
         let saldo_ant: f64 = conn
             .query_row(
                 r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#,
-                params![item.product_id],
+                params![pid],
                 |row| row.get(0),
             )
             .unwrap_or(0.0);
@@ -224,7 +302,7 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
         let custo_ant: f64 = conn
             .query_row(
                 r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
-                params![item.product_id],
+                params![pid],
                 |row| row.get(0),
             )
             .map_err(|e| e.to_string())?;
@@ -245,34 +323,38 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
             r#"UPDATE "Products"
                SET expected_loss_rate = ?, loss_mode = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
-            params![item.loss_rate, item.loss_mode, item.product_id],
+            params![item.loss_rate, item.loss_mode, pid],
         )
         .map_err(|e| e.to_string())?;
 
         conn.execute(
             r#"UPDATE "Products" SET cost_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
-            params![novo_custo, item.product_id],
+            params![novo_custo, pid],
         )
         .map_err(|e| e.to_string())?;
 
-        if item.final_price > 0.0 && item.loss_rate < 1.0 {
+        let (markup, profit_margin) = if item.final_price > 0.0 && item.loss_rate < 1.0 {
             let cmv = novo_custo / (1.0 - item.loss_rate);
-            let markup = item.final_price / cmv;
-            let profit_margin = 1.0 - rates.cv - rates.df - rates.investment_rate - cmv / item.final_price;
-            conn.execute(
-                r#"UPDATE "Products"
-                   SET final_price = ?, markup = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
-                   WHERE id = ?"#,
-                params![item.final_price, markup, profit_margin, item.product_id],
+            (
+                item.final_price / cmv,
+                1.0 - rates.cv - rates.df - rates.investment_rate - cmv / item.final_price,
             )
-            .map_err(|e| e.to_string())?;
-        }
+        } else {
+            (0.0, 0.0)
+        };
+        conn.execute(
+            r#"UPDATE "Products"
+               SET final_price = ?, markup = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?"#,
+            params![item.final_price, markup, profit_margin, pid],
+        )
+        .map_err(|e| e.to_string())?;
 
         conn.execute(
             r#"INSERT INTO "Stock_Movements"
                (product_id, quantity, movement_type, motive, created_at)
                VALUES (?, ?, 'in', 'compra', CURRENT_TIMESTAMP)"#,
-            params![item.product_id, stock_qty],
+            params![pid, stock_qty],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -622,12 +704,17 @@ pub fn get_purchase_draft(purchase_id: i64, state: State<DbState>) -> Result<Pur
     }
     let mut stmt = conn
         .prepare(r#"
-            SELECT pi.product_id, p.name, p.unit,
+            SELECT pi.product_id,
+                   COALESCE(p.name, pi.new_product_name),
+                   COALESCE(p.unit, pi.new_product_unit),
                    CAST(pi.quantity AS DOUBLE), CAST(pi.unit_cost AS DOUBLE),
-                   CAST(pi.unit_qty AS DOUBLE), CAST(pi.loss_rate AS DOUBLE),
-                   pi.loss_mode, CAST(pi.final_price AS DOUBLE)
+                   CAST(pi.unit_qty AS DOUBLE),
+                   CAST(COALESCE(pi.loss_rate, 0.0) AS DOUBLE),
+                   pi.loss_mode, CAST(pi.final_price AS DOUBLE),
+                   pi.new_product_description, pi.new_product_sellable,
+                   (pi.product_id IS NULL)
             FROM "Purchase_Items" pi
-            JOIN "Products" p ON p.id = pi.product_id
+            LEFT JOIN "Products" p ON p.id = pi.product_id
             WHERE pi.purchase_id = ?
             ORDER BY pi.id
         "#)
@@ -636,14 +723,17 @@ pub fn get_purchase_draft(purchase_id: i64, state: State<DbState>) -> Result<Pur
         .query_map(params![purchase_id], |row| {
             Ok(PurchaseDraftItem {
                 product_id: row.get(0)?,
-                product_name: row.get(1)?,
-                product_unit: row.get(2)?,
+                product_name: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                product_unit: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
                 quantity: row.get(3)?,
                 unit_cost: row.get(4)?,
                 unit_qty: row.get(5)?,
-                loss_rate: row.get::<_, Option<f64>>(6)?.unwrap_or(0.0),
+                loss_rate: row.get(6)?,
                 loss_mode: row.get(7)?,
                 final_price: row.get(8)?,
+                new_product_description: row.get(9)?,
+                new_product_sellable: row.get(10)?,
+                is_new_product: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -677,24 +767,53 @@ pub fn update_purchase(
         )
         .map_err(|e| e.to_string())?;
         for item in &items {
-            let creates_stock: bool = conn
-                .query_row(r#"SELECT NOT sellable FROM "Products" WHERE id = ?"#, params![item.product_id], |r| r.get(0))
-                .map_err(|e| e.to_string())?;
-            let effective_loss = item.loss_rate
-                .unwrap_or_else(|| get_product_loss_rate_raw(&conn, item.product_id));
+            let has_product_id = item.product_id.is_some();
+            let has_new_product = item.new_product_name.is_some() && item.new_product_unit.is_some();
+            if has_product_id == has_new_product {
+                return Err(
+                    "Cada item deve ter exatamente um produto existente ou dados de produto novo"
+                        .to_string(),
+                );
+            }
             let loss_mode = item.loss_mode.as_deref().unwrap_or("manual");
             validate_loss_mode(loss_mode)?;
-            conn.execute(
-                r#"INSERT INTO "Purchase_Items"
-                   (purchase_id, product_id, quantity, unit_cost, final_price,
-                    unit_qty, creates_stock, loss_rate, loss_mode, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
-                params![
-                    purchase_id, item.product_id, item.quantity, item.unit_cost,
-                    item.final_price, item.unit_qty, creates_stock, effective_loss, loss_mode,
-                ],
-            )
-            .map_err(|e| e.to_string())?;
+
+            if let Some(pid) = item.product_id {
+                let effective_loss = item.loss_rate
+                    .unwrap_or_else(|| get_product_loss_rate_raw(&conn, pid));
+                conn.execute(
+                    r#"INSERT INTO "Purchase_Items"
+                       (purchase_id, product_id, quantity, unit_cost, final_price,
+                        unit_qty, creates_stock, loss_rate, loss_mode, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, true, ?, ?, CURRENT_TIMESTAMP)"#,
+                    params![
+                        purchase_id, pid, item.quantity, item.unit_cost,
+                        item.final_price, item.unit_qty, effective_loss, loss_mode,
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                let new_name = item.new_product_name.as_deref().unwrap();
+                let new_unit = item.new_product_unit.as_deref().unwrap();
+                let new_desc = item.new_product_description.as_deref();
+                let new_sellable = item.new_product_sellable.unwrap_or(false);
+                let creates_stock = !new_sellable;
+                let effective_loss = item.loss_rate.unwrap_or(0.0);
+                conn.execute(
+                    r#"INSERT INTO "Purchase_Items"
+                       (purchase_id, product_id, quantity, unit_cost, final_price,
+                        unit_qty, creates_stock, loss_rate, loss_mode,
+                        new_product_name, new_product_unit, new_product_description,
+                        new_product_sellable, created_at)
+                       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
+                    params![
+                        purchase_id, item.quantity, item.unit_cost, item.final_price,
+                        item.unit_qty, creates_stock, effective_loss, loss_mode,
+                        new_name, new_unit, new_desc, new_sellable,
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
         }
         Ok(())
     })();
@@ -811,13 +930,11 @@ mod tests {
         let product_id = insert_product(&conn, "Farinha", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 10.0,
             unit_cost: 3.0,
             final_price: 6.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }];
 
         conn.execute_batch("BEGIN").unwrap();
@@ -849,13 +966,11 @@ mod tests {
         let product_id = insert_product(&conn, "Farinha", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 10.0,
             unit_cost: 3.0,
             final_price: 6.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }];
 
         conn.execute_batch("BEGIN").unwrap();
@@ -895,13 +1010,11 @@ mod tests {
         let product_id = insert_product(&conn, "Papel Foto", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 10.0,
             unit_cost: 4.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }];
 
         conn.execute_batch("BEGIN").unwrap();
@@ -928,13 +1041,12 @@ mod tests {
         let product_id = insert_product(&conn, "Folha A4", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 2.0,
             unit_cost: 10.0,
             final_price: 0.0,
             unit_qty: Some(500.0),
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }];
 
         conn.execute_batch("BEGIN").unwrap();
@@ -964,13 +1076,11 @@ mod tests {
         let product_id = insert_product(&conn, "Bobina", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 3.0,
             unit_cost: 5.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }];
 
         conn.execute_batch("BEGIN").unwrap();
@@ -996,13 +1106,11 @@ mod tests {
         let product_id = insert_product(&conn, "Papel", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 5.0,
             unit_cost: 2.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }];
 
         conn.execute_batch("BEGIN").unwrap();
@@ -1033,13 +1141,11 @@ mod tests {
         let product_id = insert_product(&conn, "Tinta", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 5.0,
             unit_cost: 10.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }];
 
         conn.execute_batch("BEGIN").unwrap();
@@ -1070,13 +1176,11 @@ mod tests {
         let product_id = insert_product(&conn, "Farinha", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 10.0,
             unit_cost: 3.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }];
         run_purchase(&conn, 0.0, items);
 
@@ -1092,23 +1196,19 @@ mod tests {
         let product_id = insert_product(&conn, "Bobina Extra", false);
 
         run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 10.0,
             unit_cost: 3.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }]);
 
         run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 5.0,
             unit_cost: 5.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }]);
 
         let cost: f64 = conn
@@ -1124,13 +1224,11 @@ mod tests {
         let product_id = insert_product(&conn, "Papel Foto", false);
 
         run_purchase(&conn, 100.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 10.0,
             unit_cost: 4.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }]);
 
         let cost: f64 = conn
@@ -1146,13 +1244,12 @@ mod tests {
         let product_id = insert_product(&conn, "Folha A4", false);
 
         run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 2.0,
             unit_cost: 10.0,
             final_price: 0.0,
             unit_qty: Some(500.0),
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }]);
 
         let cost: f64 = conn
@@ -1168,13 +1265,11 @@ mod tests {
         let product_id = insert_product(&conn, "Papel Foto", false);
 
         run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 10.0,
             unit_cost: 5.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }]);
 
         let stored_loss: f64 = conn
@@ -1202,13 +1297,13 @@ mod tests {
         let product_id = insert_product(&conn, "Bobina", false);
 
         run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 5.0,
             unit_cost: 20.0,
             final_price: 0.0,
-            unit_qty: None,
             loss_rate: Some(0.15),
             loss_mode: Some("manual".to_string()),
+            ..Default::default()
         }]);
 
         let stored_loss: f64 = conn
@@ -1246,13 +1341,12 @@ mod tests {
         ).unwrap();
 
         run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 10.0,
             unit_cost: 3.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
             loss_mode: Some("auto".to_string()),
+            ..Default::default()
         }]);
 
         let (loss, mode): (f64, String) = conn
@@ -1272,13 +1366,13 @@ mod tests {
         let product_id = insert_product(&conn, "Papel", false);
 
         run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 4.0,
             unit_cost: 8.0,
             final_price: 0.0,
-            unit_qty: None,
             loss_rate: Some(0.25),
             loss_mode: Some("manual".to_string()),
+            ..Default::default()
         }]);
 
         let (loss, mode): (f64, String) = conn
@@ -1298,13 +1392,12 @@ mod tests {
         let product_id = insert_product(&conn, "Tinta", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 2.0,
             unit_cost: 5.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
             loss_mode: Some("automatico".to_string()),
+            ..Default::default()
         }];
         conn.execute_batch("BEGIN").unwrap();
         let result = create_purchase_draft(&conn, 0.0, &items);
@@ -1318,13 +1411,11 @@ mod tests {
         let id = insert_product(&conn, "Papel A4", false);
 
         run_purchase(&conn, 10.0, vec![PurchaseItemInput {
-            product_id: id,
+            product_id: Some(id),
             quantity: 5.0,
             unit_cost: 20.0,
             final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }]);
 
         let qty: f64 = conn
@@ -1633,24 +1724,8 @@ mod tests {
         let id_b = insert_product(&conn, "Insumo B", false);
 
         run_purchase(&conn, 20.0, vec![
-            PurchaseItemInput {
-                product_id: id_a,
-                quantity: 5.0,
-                unit_cost: 2.0,
-                final_price: 0.0,
-                unit_qty: None,
-                loss_rate: None,
-                loss_mode: None,
-            },
-            PurchaseItemInput {
-                product_id: id_b,
-                quantity: 10.0,
-                unit_cost: 3.0,
-                final_price: 0.0,
-                unit_qty: None,
-                loss_rate: None,
-                loss_mode: None,
-            },
+            PurchaseItemInput { product_id: Some(id_a), quantity: 5.0, unit_cost: 2.0, final_price: 0.0, ..Default::default() },
+            PurchaseItemInput { product_id: Some(id_b), quantity: 10.0, unit_cost: 3.0, final_price: 0.0, ..Default::default() },
         ]);
 
         let cost_a: f64 = conn
@@ -1669,13 +1744,9 @@ mod tests {
         let product_id = insert_product(&conn, "Brinde", false);
 
         run_purchase(&conn, 50.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 5.0,
-            unit_cost: 0.0,
-            final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }]);
 
         let cost: f64 = conn
@@ -1690,13 +1761,11 @@ mod tests {
         let product_id = insert_product(&conn, "Produto X", false);
 
         run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 10.0,
             unit_cost: 4.0,
             final_price: 6.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }]);
 
         let (fp, markup, margin): (f64, f64, f64) = conn
@@ -1721,13 +1790,11 @@ mod tests {
         let product_id = insert_product(&conn, "Papel Unidade", false);
 
         run_purchase(&conn, 10.0, vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 2.0,
             unit_cost: 5.0,
-            final_price: 0.0,
             unit_qty: Some(10.0),
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }]);
 
         let cost: f64 = conn
@@ -1743,13 +1810,10 @@ mod tests {
         let product_id = insert_product(&conn, "Insumo", false);
 
         let items = vec![PurchaseItemInput {
-            product_id,
+            product_id: Some(product_id),
             quantity: 1.0,
             unit_cost: 1.0,
-            final_price: 0.0,
-            unit_qty: None,
-            loss_rate: None,
-            loss_mode: None,
+            ..Default::default()
         }];
 
         // Create one open draft
@@ -1774,5 +1838,174 @@ mod tests {
             .query_row(r#"SELECT COUNT(*) FROM "Purchases" WHERE status = 'closed'"#, [], |r| r.get(0))
             .unwrap();
         assert_eq!(closed_count, 1, "should have 1 closed purchase");
+    }
+
+    // Section 4: new-product inline creation tests
+
+    #[test]
+    fn new_product_draft_persists_pending_fields_no_product_created() {
+        let conn = test_db();
+        let item = PurchaseItemInput {
+            new_product_name: Some("Novo Insumo".to_string()),
+            new_product_unit: Some("unidade".to_string()),
+            new_product_description: Some("desc".to_string()),
+            new_product_sellable: Some(false),
+            quantity: 5.0,
+            unit_cost: 2.0,
+            ..Default::default()
+        };
+
+        conn.execute_batch("BEGIN").unwrap();
+        create_purchase_draft(&conn, 0.0, &[item]).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let count: i64 = conn
+            .query_row(r#"SELECT COUNT(*) FROM "Products""#, [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "no product must be created during draft");
+
+        let (name, unit, desc, sellable, pid): (String, String, Option<String>, bool, Option<i64>) = conn
+            .query_row(
+                r#"SELECT new_product_name, new_product_unit, new_product_description,
+                          new_product_sellable, product_id
+                   FROM "Purchase_Items""#,
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Novo Insumo");
+        assert_eq!(unit, "unidade");
+        assert_eq!(desc, Some("desc".to_string()));
+        assert!(!sellable);
+        assert!(pid.is_none(), "product_id must be null in draft");
+    }
+
+    #[test]
+    fn close_purchase_creates_new_product_backfills_and_applies_effects() {
+        let conn = test_db();
+        use crate::settings::insert_unit_of_measure;
+        insert_unit_of_measure(&conn, "unidade", "un");
+
+        let item = PurchaseItemInput {
+            new_product_name: Some("Produto Fechamento".to_string()),
+            new_product_unit: Some("unidade".to_string()),
+            new_product_sellable: Some(false),
+            quantity: 10.0,
+            unit_cost: 3.0,
+            final_price: 5.0,
+            ..Default::default()
+        };
+
+        conn.execute_batch("BEGIN").unwrap();
+        let purchase_id = create_purchase_draft(&conn, 0.0, &[item]).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_effects(&conn, purchase_id).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let pid: Option<i64> = conn
+            .query_row(
+                r#"SELECT product_id FROM "Purchase_Items" WHERE purchase_id = ?"#,
+                params![purchase_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(pid.is_some(), "product_id must be backfilled after close");
+
+        let (cost, name): (f64, String) = conn
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE), name FROM "Products" WHERE id = ?"#,
+                params![pid.unwrap()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Produto Fechamento");
+        assert!((cost - 3.0).abs() < 1e-9, "cost_price expected 3.0, got {}", cost);
+
+        let stock_qty: f64 = conn
+            .query_row(
+                r#"SELECT quantity FROM "Stock_Movements"
+                   WHERE product_id = ? AND movement_type = 'in'"#,
+                params![pid.unwrap()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((stock_qty - 10.0).abs() < 1e-9, "stock qty expected 10.0, got {}", stock_qty);
+    }
+
+    #[test]
+    fn draft_item_without_product_or_new_product_data_returns_error() {
+        let conn = test_db();
+        let item = PurchaseItemInput {
+            quantity: 1.0,
+            unit_cost: 1.0,
+            ..Default::default()
+        };
+
+        conn.execute_batch("BEGIN").unwrap();
+        let result = create_purchase_draft(&conn, 0.0, &[item]);
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert!(result.is_err(), "must reject item with no product reference");
+    }
+
+    #[test]
+    fn close_purchase_rollback_removes_new_product() {
+        let conn = test_db();
+        use crate::settings::insert_unit_of_measure;
+        insert_unit_of_measure(&conn, "unidade", "un");
+
+        let item = PurchaseItemInput {
+            new_product_name: Some("Produto Rollback".to_string()),
+            new_product_unit: Some("unidade".to_string()),
+            new_product_sellable: Some(false),
+            quantity: 1.0,
+            unit_cost: 1.0,
+            ..Default::default()
+        };
+
+        conn.execute_batch("BEGIN").unwrap();
+        let purchase_id = create_purchase_draft(&conn, 0.0, &[item]).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_effects(&conn, purchase_id).unwrap();
+        conn.execute_batch("ROLLBACK").unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Products" WHERE name = 'Produto Rollback'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "product must be rolled back with the transaction");
+    }
+
+    #[test]
+    fn close_purchase_new_product_invalid_unit_returns_error() {
+        let conn = test_db();
+        let item = PurchaseItemInput {
+            new_product_name: Some("Produto Unidade Ruim".to_string()),
+            new_product_unit: Some("unidade_inexistente".to_string()),
+            new_product_sellable: Some(false),
+            quantity: 1.0,
+            unit_cost: 1.0,
+            ..Default::default()
+        };
+
+        conn.execute_batch("BEGIN").unwrap();
+        let purchase_id = create_purchase_draft(&conn, 0.0, &[item]).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        conn.execute_batch("BEGIN").unwrap();
+        let result = do_close_effects(&conn, purchase_id);
+        conn.execute_batch("ROLLBACK").unwrap();
+
+        assert!(result.is_err(), "must fail with invalid unit");
+        let count: i64 = conn
+            .query_row(r#"SELECT COUNT(*) FROM "Products""#, [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "no product must remain after failed close");
     }
 }
