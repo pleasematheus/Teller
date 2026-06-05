@@ -21,6 +21,7 @@ export function UnidadesSection() {
   // new form
   const [newName, setNewName] = useState("");
   const [newAbbreviation, setNewAbbreviation] = useState("");
+  const [newInteger, setNewInteger] = useState(true);
   const [newNameError, setNewNameError] = useState<string | null>(null);
   const [savingNew, setSavingNew] = useState(false);
 
@@ -28,6 +29,7 @@ export function UnidadesSection() {
   const [editingUnit, setEditingUnit] = useState<UnitOfMeasure | null>(null);
   const [editName, setEditName] = useState("");
   const [editAbbreviation, setEditAbbreviation] = useState("");
+  const [editInteger, setEditInteger] = useState(true);
   const [editNameError, setEditNameError] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -59,6 +61,7 @@ export function UnidadesSection() {
     setEditingUnit(unit);
     setEditName(unit.name);
     setEditAbbreviation(unit.abbreviation);
+    setEditInteger(unit.integer);
     setEditNameError(null);
     setConfirmingDelete(false);
     setDeleteError(null);
@@ -74,9 +77,10 @@ export function UnidadesSection() {
     setSavingNew(true);
     setNewNameError(null);
     try {
-      await invoke("create_unit_of_measure", { name, abbreviation });
+      await invoke("create_unit_of_measure", { name, abbreviation, integer: newInteger });
       setNewName("");
       setNewAbbreviation("");
+      setNewInteger(true);
       setView("list");
       loadUnits();
     } catch (err) {
@@ -95,7 +99,7 @@ export function UnidadesSection() {
     setSavingEdit(true);
     setEditNameError(null);
     try {
-      await invoke("rename_unit_of_measure", { id: editingUnit.id, name, abbreviation });
+      await invoke("rename_unit_of_measure", { id: editingUnit.id, name, abbreviation, integer: editInteger });
       setView("list");
       setEditingUnit(null);
       loadUnits();
@@ -155,6 +159,7 @@ export function UnidadesSection() {
                   onCheckedChange={() => handleToggle(unit)}
                 />
                 <span className="flex-1 text-sm text-teller-text">{unit.name}</span>
+                <span className="text-xs text-teller-muted">{unit.integer ? "Inteiro" : "Decimal"}</span>
                 <span className="text-xs text-teller-muted">{unit.abbreviation}</span>
                 <button
                   onClick={() => handleOpenEdit(unit)}
@@ -204,6 +209,18 @@ export function UnidadesSection() {
               disabled={savingNew}
               className={inputClass}
             />
+          </div>
+          <div className="flex items-center gap-3">
+            <Switch
+              size="sm"
+              checked={newInteger}
+              onCheckedChange={setNewInteger}
+              disabled={savingNew}
+            />
+            <div className="flex flex-col">
+              <span className="text-teller-text text-sm">Somente números inteiros</span>
+              <span className="text-teller-muted text-xs">Desative para permitir casas decimais (ex: kg, L)</span>
+            </div>
           </div>
           {newNameError && <p className="text-teller-danger text-xs">{newNameError}</p>}
           <div className="flex gap-2 justify-end mt-2">
@@ -261,6 +278,18 @@ export function UnidadesSection() {
             disabled={savingEdit || deleting}
             className={inputClass}
           />
+        </div>
+        <div className="flex items-center gap-3">
+          <Switch
+            size="sm"
+            checked={editInteger}
+            onCheckedChange={setEditInteger}
+            disabled={savingEdit || deleting}
+          />
+          <div className="flex flex-col">
+            <span className="text-teller-text text-sm">Somente números inteiros</span>
+            <span className="text-teller-muted text-xs">Desative para permitir casas decimais (ex: kg, L)</span>
+          </div>
         </div>
         {editNameError && <p className="text-teller-danger text-xs">{editNameError}</p>}
         {deleteError && <p className="text-teller-danger text-xs">{deleteError}</p>}

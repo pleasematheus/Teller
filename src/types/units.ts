@@ -3,4 +3,5 @@ export type UnitOfMeasure = {
   name: string;
   abbreviation: string;
   active: boolean;
+  integer: boolean;
 };

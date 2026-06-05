@@ -6,6 +6,8 @@ import { Label } from "@/components/ui/label"
 import { ProductCommand } from "@/components/ui/ProductCommand"
 import type { Product } from "@/types/product"
 import type { Sale, SaleItem, SaleItemInput } from "@/types/sale"
+import type { UnitOfMeasure } from "@/types/units"
+import { isUnitInteger, validateQuantity } from "@/lib/unitQuantity"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -29,14 +31,24 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
   const [label, setLabel] = useState(sale?.label ?? "")
   const [items, setItems] = useState<CartItem[]>([])
   const [qty, setQty] = useState(1)
+  const [units, setUnits] = useState<UnitOfMeasure[]>([])
   const [searchOpen, setSearchOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    invoke<UnitOfMeasure[]>("list_units_of_measure").then(setUnits).catch(console.error)
+  }, [])
 
   const sellableProducts = useMemo(
     () => products.filter((p) => p.sellable && p.active),
     [products],
   )
+
+  const productInteger = (productId: number): boolean => {
+    const unit = products.find((p) => p.id === productId)?.unit ?? ""
+    return isUnitInteger(units, unit)
+  }
 
   const selectedIds = useMemo(() => items.map((i) => i.product_id), [items])
 
@@ -69,6 +81,17 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
   }, [])
 
   const addProduct = (product: Product) => {
+    const integer = isUnitInteger(units, product.unit)
+    if (qty <= 0) {
+      setError("Informe uma quantidade maior que zero.")
+      return
+    }
+    const check = validateQuantity(qty, integer)
+    if (!check.ok) {
+      setError(check.error ?? "Quantidade inválida")
+      return
+    }
+    setError(null)
     setItems((prev) => {
       const existing = prev.findIndex((i) => i.product_id === product.id)
       if (existing >= 0) {
@@ -92,9 +115,12 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
   const updateQuantity = (idx: number, raw: string) => {
     const value = parseFloat(raw) || 0
     setItems((prev) =>
-      prev.map((item, i) =>
-        i === idx ? { ...item, quantity: Math.max(1, Math.round(value)) } : item,
-      ),
+      prev.map((item, i) => {
+        if (i !== idx) return item
+        const integer = productInteger(item.product_id)
+        const quantity = integer ? Math.max(1, Math.round(value)) : Math.max(0.001, value)
+        return { ...item, quantity }
+      }),
     )
   }
 
@@ -156,10 +182,10 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
               <span className="text-xs text-teller-muted">Qtd.</span>
               <Input
                 type="number"
-                min={1}
-                step={1}
+                min={0.001}
+                step="any"
                 value={qty}
-                onChange={(e) => setQty(Math.max(1, Math.round(parseFloat(e.target.value) || 1)))}
+                onChange={(e) => { setQty(parseFloat(e.target.value) || 0); setError(null) }}
                 className="h-9 text-sm"
               />
             </div>
@@ -193,8 +219,8 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
                     <span className="text-xs text-teller-muted">Qtd.</span>
                     <Input
                       type="number"
-                      min={1}
-                      step={1}
+                      min={productInteger(item.product_id) ? 1 : 0.001}
+                      step={productInteger(item.product_id) ? 1 : "any"}
                       value={item.quantity}
                       onChange={(e) => updateQuantity(idx, e.target.value)}
                       className="h-8 text-sm"

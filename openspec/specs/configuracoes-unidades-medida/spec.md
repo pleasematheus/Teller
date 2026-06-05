@@ -8,11 +8,11 @@ Gerenciamento das unidades de medida disponíveis para produtos. O operador cada
 
 ### Requirement: Listagem de unidades de medida
 
-O sistema SHALL expor o comando `list_units_of_measure` que retorna todas as unidades cadastradas em `Units_Of_Measure` com os campos `id`, `name`, `abbreviation` e `active`, ordenadas por `active` decrescente e depois por `name`.
+O sistema SHALL expor o comando `list_units_of_measure` que retorna todas as unidades cadastradas em `Units_Of_Measure` com os campos `id`, `name`, `abbreviation`, `active` e `integer`, ordenadas por `active` decrescente e depois por `name`.
 
 #### Scenario: Lista com unidades existentes
 - **WHEN** o comando `list_units_of_measure` é invocado e há unidades cadastradas
-- **THEN** o sistema retorna todos os registros com `id`, `name`, `abbreviation` e `active`, com as ativas primeiro e ordenadas por nome
+- **THEN** o sistema retorna todos os registros com `id`, `name`, `abbreviation`, `active` e `integer`, com as ativas primeiro e ordenadas por nome
 
 #### Scenario: Lista vazia
 - **WHEN** o comando `list_units_of_measure` é invocado e não há unidades
@@ -20,11 +20,15 @@ O sistema SHALL expor o comando `list_units_of_measure` que retorna todas as uni
 
 ### Requirement: Cadastro de unidade de medida
 
-O sistema SHALL expor o comando `create_unit_of_measure` que insere uma nova unidade com `name` e `abbreviation` não-vazios (após `trim`) e `active = true`. O sistema SHALL rejeitar nome ou sigla vazios e nome duplicado.
+O sistema SHALL expor o comando `create_unit_of_measure` que insere uma nova unidade com `name` e `abbreviation` não-vazios (após `trim`), `active = true` e o flag `integer` informado pelo chamador. O sistema SHALL rejeitar nome ou sigla vazios e nome duplicado.
 
-#### Scenario: Cadastro válido
-- **WHEN** o usuário submete `name` e `abbreviation` não-vazios e o nome ainda não existe
-- **THEN** o sistema insere a unidade com `active = true` e retorna sucesso
+#### Scenario: Cadastro válido inteiro
+- **WHEN** o usuário submete `name` e `abbreviation` não-vazios, `integer = true` e o nome ainda não existe
+- **THEN** o sistema insere a unidade com `active = true` e `integer = true` e retorna sucesso
+
+#### Scenario: Cadastro válido decimal
+- **WHEN** o usuário submete `name` e `abbreviation` não-vazios e `integer = false`
+- **THEN** o sistema insere a unidade com `active = true` e `integer = false` e retorna sucesso
 
 #### Scenario: Nome vazio
 - **WHEN** o usuário submete `name` em branco
@@ -40,7 +44,7 @@ O sistema SHALL expor o comando `create_unit_of_measure` que insere uma nova uni
 
 ### Requirement: Edição de unidade de medida
 
-O sistema SHALL expor o comando `rename_unit_of_measure` que atualiza `name` e `abbreviation` de uma unidade existente. Ao alterar o `name`, o sistema SHALL propagar o novo nome para `Products.unit` de todos os produtos que usavam o nome anterior, na mesma transação. O sistema SHALL expor o comando `update_unit_of_measure` que altera apenas o flag `active`.
+O sistema SHALL expor o comando `rename_unit_of_measure` que atualiza `name`, `abbreviation` e `integer` de uma unidade existente. Ao alterar o `name`, o sistema SHALL propagar o novo nome para `Products.unit` de todos os produtos que usavam o nome anterior, na mesma transação. O sistema SHALL expor o comando `update_unit_of_measure` que altera apenas o flag `active`.
 
 #### Scenario: Renomear propaga para produtos
 - **WHEN** o usuário renomeia uma unidade de `nome_antigo` para `nome_novo`
@@ -49,6 +53,10 @@ O sistema SHALL expor o comando `rename_unit_of_measure` que atualiza `name` e `
 #### Scenario: Editar sigla não afeta produtos
 - **WHEN** o usuário altera apenas a `abbreviation` de uma unidade
 - **THEN** o sistema atualiza a sigla sem alterar nenhum registro de `Products`
+
+#### Scenario: Alternar inteiro
+- **WHEN** o usuário salva a edição de uma unidade alterando `integer`
+- **THEN** o sistema grava o novo valor de `integer` em `Units_Of_Measure` sem alterar nenhum registro de `Products`
 
 #### Scenario: Desativar unidade
 - **WHEN** o usuário define `active = false` para uma unidade
@@ -72,15 +80,19 @@ O sistema SHALL expor o comando `delete_unit_of_measure` que remove uma unidade,
 
 ### Requirement: Seção de Unidades de Medida em Configurações
 
-O sistema SHALL exibir uma seção "Unidades de Medida" no módulo de Configurações, com listagem das unidades (nome, sigla, ativo), criação, edição de nome e sigla, alternância de ativo e exclusão, espelhando o padrão da seção de Formas de Pagamento.
+O sistema SHALL exibir uma seção "Unidades de Medida" no módulo de Configurações, com listagem das unidades (nome, sigla, ativo, inteiro), criação, edição de nome, sigla e inteiro, alternância de ativo e exclusão, espelhando o padrão da seção de Formas de Pagamento.
 
 #### Scenario: Acesso à seção
 - **WHEN** o usuário abre Configurações e seleciona "Unidades de Medida"
-- **THEN** o sistema exibe a lista de unidades carregada por `list_units_of_measure`
+- **THEN** o sistema exibe a lista de unidades carregada por `list_units_of_measure`, indicando para cada unidade se é inteira
 
-#### Scenario: Criar pela seção
-- **WHEN** o usuário preenche nome e sigla e confirma a criação
-- **THEN** o sistema chama `create_unit_of_measure` e a nova unidade aparece na lista
+#### Scenario: Criar pela seção definindo inteiro
+- **WHEN** o usuário preenche nome e sigla, escolhe se a unidade é inteira e confirma a criação
+- **THEN** o sistema chama `create_unit_of_measure` com o `integer` escolhido e a nova unidade aparece na lista com esse estado
+
+#### Scenario: Editar inteiro pela seção
+- **WHEN** o usuário abre a edição de uma unidade, alterna o controle de inteiro e salva
+- **THEN** o sistema chama `rename_unit_of_measure` com o novo `integer` e a lista reflete a alteração
 
 #### Scenario: Erro de exclusão exibido
 - **WHEN** a exclusão é bloqueada por uso
