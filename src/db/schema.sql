@@ -241,6 +241,7 @@ CREATE TABLE IF NOT EXISTS "Units_Of_Measure" (
     "name"         VARCHAR   NOT NULL UNIQUE,
     "abbreviation" VARCHAR   NOT NULL,
     "active"       BOOLEAN   NOT NULL DEFAULT TRUE,
+    "integer"      BOOLEAN   NOT NULL DEFAULT TRUE,
     "updated_at"   TIMESTAMP NOT NULL,
     "created_at"   TIMESTAMP NOT NULL
 );

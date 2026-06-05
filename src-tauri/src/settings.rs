@@ -36,6 +36,7 @@ pub struct UnitOfMeasure {
     pub name: String,
     pub abbreviation: String,
     pub active: bool,
+    pub integer: bool,
 }
 
 #[derive(Serialize)]
@@ -416,7 +417,7 @@ pub fn list_units_of_measure(state: State<DbState>) -> Result<Vec<UnitOfMeasure>
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare(r#"
-            SELECT id, name, abbreviation, active
+            SELECT id, name, abbreviation, active, "integer"
             FROM "Units_Of_Measure"
             ORDER BY active DESC, name
         "#)
@@ -428,6 +429,7 @@ pub fn list_units_of_measure(state: State<DbState>) -> Result<Vec<UnitOfMeasure>
                 name: row.get(1)?,
                 abbreviation: row.get(2)?,
                 active: row.get(3)?,
+                integer: row.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -440,6 +442,7 @@ pub fn list_units_of_measure(state: State<DbState>) -> Result<Vec<UnitOfMeasure>
 pub fn create_unit_of_measure(
     name: String,
     abbreviation: String,
+    integer: bool,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -452,9 +455,9 @@ pub fn create_unit_of_measure(
     }
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
-           VALUES (?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-        params![name, abbreviation],
+        r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, "integer", updated_at, created_at)
+           VALUES (?, ?, true, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+        params![name, abbreviation, integer],
     )
     .map_err(|e| {
         let msg = e.to_string();
@@ -472,6 +475,7 @@ pub fn rename_unit_of_measure(
     id: i64,
     name: String,
     abbreviation: String,
+    integer: bool,
     state: State<DbState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
@@ -498,9 +502,9 @@ pub fn rename_unit_of_measure(
         let rows = conn
             .execute(
                 r#"UPDATE "Units_Of_Measure"
-                   SET name = ?, abbreviation = ?, updated_at = CURRENT_TIMESTAMP
+                   SET name = ?, abbreviation = ?, "integer" = ?, updated_at = CURRENT_TIMESTAMP
                    WHERE id = ?"#,
-                params![name, abbreviation, id],
+                params![name, abbreviation, integer, id],
             )
             .map_err(|e| e.to_string())?;
         if rows == 0 {
@@ -1028,6 +1032,108 @@ mod tests {
             [],
         );
         assert!(result.is_err(), "duplicate name should violate UNIQUE constraint");
+    }
+
+    // integer flag tests
+
+    #[test]
+    fn create_unit_of_measure_stores_integer_true() {
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, "integer", updated_at, created_at)
+               VALUES ('un', 'un', true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+        let integer: bool = conn.query_row(
+            r#"SELECT "integer" FROM "Units_Of_Measure" WHERE name = 'un'"#,
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(integer);
+    }
+
+    #[test]
+    fn create_unit_of_measure_integer_defaults_true_and_accepts_false() {
+        let conn = test_db();
+        // Sem informar "integer": default da coluna é TRUE.
+        let uid = insert_unit_of_measure(&conn, "kg", "kg");
+        let default_integer: bool = conn.query_row(
+            r#"SELECT "integer" FROM "Units_Of_Measure" WHERE id = ?"#,
+            params![uid],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(default_integer);
+
+        // Informando false explicitamente.
+        conn.execute(
+            r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, "integer", updated_at, created_at)
+               VALUES ('L', 'L', true, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+        let integer: bool = conn.query_row(
+            r#"SELECT "integer" FROM "Units_Of_Measure" WHERE name = 'L'"#,
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(!integer);
+    }
+
+    #[test]
+    fn list_units_of_measure_select_returns_integer() {
+        let conn = test_db();
+        conn.execute(
+            r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, "integer", updated_at, created_at)
+               VALUES ('un', 'un', true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+        let (name, integer): (String, bool) = conn.query_row(
+            r#"SELECT name, "integer" FROM "Units_Of_Measure" ORDER BY active DESC, name"#,
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(name, "un");
+        assert!(integer);
+    }
+
+    #[test]
+    fn rename_unit_of_measure_updates_integer_and_propagates_name() {
+        let conn = test_db();
+        let uid = insert_unit_of_measure(&conn, "Unidade", "un");
+        conn.execute(
+            r#"INSERT INTO "Products" (name, active, sellable, markup, cost_price, final_price,
+               expected_loss_rate, unit, updated_at, created_at)
+               VALUES ('Produto Teste', true, true, 1.5, 10.0, 15.0, 0.0, 'Unidade',
+               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            [],
+        ).unwrap();
+
+        conn.execute("BEGIN", []).unwrap();
+        conn.execute(
+            r#"UPDATE "Units_Of_Measure"
+               SET name = 'Unidade Nova', abbreviation = 'un', "integer" = false, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?"#,
+            params![uid],
+        ).unwrap();
+        conn.execute(
+            r#"UPDATE "Products" SET unit = 'Unidade Nova', updated_at = CURRENT_TIMESTAMP WHERE unit = 'Unidade'"#,
+            [],
+        ).unwrap();
+        conn.execute("COMMIT", []).unwrap();
+
+        let (new_name, integer): (String, bool) = conn.query_row(
+            r#"SELECT name, "integer" FROM "Units_Of_Measure" WHERE id = ?"#,
+            params![uid],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(new_name, "Unidade Nova");
+        assert!(!integer);
+
+        let unit: String = conn.query_row(
+            r#"SELECT unit FROM "Products" WHERE name = 'Produto Teste'"#,
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(unit, "Unidade Nova");
     }
 
     // Task 4.3 test

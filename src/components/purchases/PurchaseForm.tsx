@@ -10,6 +10,7 @@ import type { UnitOfMeasure } from "@/types/units"
 import { computePrice } from "@/lib/pricing"
 import { computeUnitQtyFactor, computeStockQty } from "@/lib/purchaseConversion"
 import { buildPurchaseItemPayload } from "@/lib/buildPurchaseItemPayload"
+import { isUnitInteger, validateQuantity } from "@/lib/unitQuantity"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -213,6 +214,14 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
       return setError("Preencha produto (ou dados do novo produto), quantidade e custo em todos os itens.")
     }
 
+    const qtyError = items.some((i) => {
+      const unitName = i.isNewProduct ? i.newProductUnit : i.productUnit
+      return !validateQuantity(parseFloat(i.quantity), isUnitInteger(units, unitName)).ok
+    })
+    if (qtyError) {
+      return setError("Há itens com unidade inteira e quantidade fracionada. Use números inteiros.")
+    }
+
     setSaving(true)
     try {
       if (purchaseId) {
@@ -281,6 +290,11 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
             const enteredPrice = parseFloat(displayedPrice) || 0
             const belowCost = cmv > 0 && enteredPrice > 0 && enteredPrice < cmv
 
+            const itemUnitName = item.isNewProduct ? item.newProductUnit : item.productUnit
+            const itemInteger = isUnitInteger(units, itemUnitName)
+            const qtyInvalid =
+              item.quantity !== "" && !validateQuantity(parseFloat(item.quantity), itemInteger).ok
+
             return (
               <div
                 key={item.id}
@@ -325,13 +339,17 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
                     <label className="text-xs text-teller-muted">Qtd</label>
                     <Input
                       type="number"
-                      min={0.0001}
-                      step="any"
+                      min={itemInteger ? 1 : 0.0001}
+                      step={itemInteger ? "1" : "any"}
                       value={item.quantity}
                       onChange={(e) => update(item.id, { quantity: e.target.value, finalPriceDirty: false })}
                       placeholder="0"
                       className="w-24"
+                      aria-invalid={qtyInvalid}
                     />
+                    {qtyInvalid && (
+                      <span className="text-xs text-red-500">Apenas inteiros</span>
+                    )}
                   </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-xs text-teller-muted">Custo unit. (R$)</label>
