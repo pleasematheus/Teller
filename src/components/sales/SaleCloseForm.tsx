@@ -53,8 +53,7 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
   const [methods, setMethods] = useState<PaymentMethod[]>([])
   const [payments, setPayments] = useState<PaymentLine[]>([{ methodId: 0, installments: 1, amount: "" }])
   const [globalDiscount, setGlobalDiscount] = useState("")
-  const [globalMode, setGlobalMode] = useState<GlobalMode>("R$")
-  const [itemModes, setItemModes] = useState<Record<number, GlobalMode>>({})
+  const [mode, setMode] = useState<GlobalMode>("%")
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null)
   const [stockMap, setStockMap] = useState<Record<number, number>>({})
   const [showStockConfirm, setShowStockConfirm] = useState(false)
@@ -107,7 +106,6 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
 
   const updateItemDiscount = (idx: number, raw: string) => {
     const value = parseFloat(raw) || 0
-    const mode = itemModes[idx] ?? "%"
     setCartItems((prev) =>
       prev.map((item, i) => {
         if (i !== idx) return item
@@ -120,16 +118,12 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
     )
   }
 
-  const setItemMode = (idx: number, mode: GlobalMode) => {
-    setItemModes((prev) => ({ ...prev, [idx]: mode }))
-  }
-
   const handleGlobalDiscountChange = (raw: string) => {
     setGlobalDiscount(raw)
     const value = parseFloat(raw) || 0
     if (value <= 0) return
 
-    if (globalMode === "%") {
+    if (mode === "%") {
       const pctValue = Math.min(1, value / 100)
       setCartItems((prev) => prev.map((item) => ({ ...item, discount: pctValue })))
     } else {
@@ -241,9 +235,8 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
               const belowFloor = item.discount > 0 && discountedPrice < floorPrice - 0.001
               const showMaxHint = focusedIdx === idx || item.discount > 0
 
-              const itemMode = itemModes[idx] ?? "%"
               const inputValue = item.discount > 0
-                ? itemMode === "%"
+                ? mode === "%"
                   ? (item.discount * 100).toFixed(2)
                   : (item.discount * item.final_price * item.quantity).toFixed(2)
                 : ""
@@ -273,38 +266,21 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
                     <div className="flex flex-col gap-1 flex-1">
                       <div className="flex items-center justify-between gap-1">
                         <span className="text-xs text-teller-muted">
-                          Desconto ({itemMode})
+                          Desconto ({mode})
                           {showMaxHint && (
                             <span className={`ml-1 ${belowFloor ? "text-red-500" : "text-teller-muted"}`}>
-                              · máx. {itemMode === "R$" ? <strong>{brl.format(maxDiscountValue)}</strong> : brl.format(maxDiscountValue)} ({itemMode === "%" ? <strong>{pct.format(maxDiscountPct)}</strong> : pct.format(maxDiscountPct)})
+                              · máx. {mode === "R$" ? <strong>{brl.format(maxDiscountValue)}</strong> : brl.format(maxDiscountValue)} ({mode === "%" ? <strong>{pct.format(maxDiscountPct)}</strong> : pct.format(maxDiscountPct)})
                             </span>
                           )}
                         </span>
-                        <div className="flex gap-0.5 rounded border border-teller-border p-0.5 text-xs shrink-0">
-                          {(["R$", "%"] as GlobalMode[]).map((m) => (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => setItemMode(idx, m)}
-                              className={[
-                                "px-1.5 py-0.5 rounded transition-colors",
-                                itemMode === m
-                                  ? "bg-teller-accent text-white"
-                                  : "text-teller-muted hover:text-teller-text",
-                              ].join(" ")}
-                            >
-                              {m}
-                            </button>
-                          ))}
-                        </div>
                       </div>
                       <Input
                         type="number"
                         min={0}
-                        max={itemMode === "%" ? 100 : undefined}
+                        max={mode === "%" ? 100 : undefined}
                         step="0.01"
                         value={inputValue}
-                        placeholder={itemMode === "R$" ? "0,00" : "0"}
+                        placeholder={mode === "R$" ? "0,00" : "0"}
                         onFocus={() => setFocusedIdx(idx)}
                         onBlur={() => setFocusedIdx(null)}
                         onChange={(e) => updateItemDiscount(idx, e.target.value)}
@@ -334,10 +310,10 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
                   <button
                     key={m}
                     type="button"
-                    onClick={() => { setGlobalMode(m); setGlobalDiscount("") }}
+                    onClick={() => { setMode(m); setGlobalDiscount("") }}
                     className={[
                       "px-2 py-0.5 rounded transition-colors",
-                      globalMode === m
+                      mode === m
                         ? "bg-teller-accent text-white"
                         : "text-teller-muted hover:text-teller-text",
                     ].join(" ")}
@@ -353,7 +329,7 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
               step="0.01"
               value={globalDiscount}
               onChange={(e) => handleGlobalDiscountChange(e.target.value)}
-              placeholder={globalMode === "R$" ? "0,00" : "0"}
+              placeholder={mode === "R$" ? "0,00" : "0"}
             />
           </div>
         )}
