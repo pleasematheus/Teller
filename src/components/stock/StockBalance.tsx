@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { ListToolbar } from "@/components/ui/ListToolbar"
+import { rankByName } from "@/lib/listSearch"
 import type { StockItem, ProductComponent } from "@/types/stock"
 import type { Product } from "@/types/product"
 
@@ -15,6 +17,14 @@ const UNIT_LABEL: Record<string, string> = {
 
 const fmtQty = (n: number) =>
   n % 1 === 0 ? n.toLocaleString("pt-BR") : n.toFixed(2)
+
+type StockFilter = "all" | "sellable" | "inputs"
+
+const FILTERS: { value: StockFilter; label: string }[] = [
+  { value: "all", label: "Todos" },
+  { value: "sellable", label: "Vendáveis" },
+  { value: "inputs", label: "Insumos" },
+]
 
 type Usage = { productName: string; qtyPerUnit: number }
 
@@ -44,8 +54,11 @@ type Props = {
 
 export function StockBalance({ onAdjust }: Props) {
   const [stock, setStock] = useState<StockItem[]>([])
+  const [sellableIds, setSellableIds] = useState(new Set<number>())
   const [usageMap, setUsageMap] = useState(new Map<number, Usage[]>())
   const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState("")
+  const [filter, setFilter] = useState<StockFilter>("all")
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -57,6 +70,8 @@ export function StockBalance({ onAdjust }: Props) {
       setStock(stockData)
 
       const sellable = productsData.filter((p) => p.sellable)
+      setSellableIds(new Set(sellable.map((p) => p.id)))
+
       const entries = await Promise.all(
         sellable.map((p) =>
           invoke<ProductComponent[]>("list_product_components", {
@@ -86,11 +101,32 @@ export function StockBalance({ onAdjust }: Props) {
     )
   }
 
+  const byType = stock.filter((item) => {
+    if (filter === "sellable") return sellableIds.has(item.product_id)
+    if (filter === "inputs") return !sellableIds.has(item.product_id)
+    return true
+  })
+
+  const displayed = rankByName(byType, query)
+
   return (
     <div className="flex flex-col gap-4 p-6 w-full">
+      <ListToolbar
+        query={query}
+        onQuery={setQuery}
+        filters={FILTERS}
+        activeFilter={filter}
+        onFilter={setFilter}
+        searchPlaceholder="Buscar produto..."
+      />
+
       {stock.length === 0 ? (
         <p className="text-teller-muted text-sm text-center py-12">
           Nenhum produto cadastrado. Adicione produtos para ver o saldo.
+        </p>
+      ) : displayed.length === 0 ? (
+        <p className="text-teller-muted text-sm text-center py-12">
+          Nenhum resultado para a busca.
         </p>
       ) : (
         <div className="rounded-lg border border-teller-border overflow-hidden">
@@ -113,7 +149,7 @@ export function StockBalance({ onAdjust }: Props) {
               </tr>
             </thead>
             <tbody>
-              {stock.map((item) => {
+              {displayed.map((item) => {
                 const usages = usageMap.get(item.product_id) ?? []
                 const capacityText = usages.length
                   ? usages
