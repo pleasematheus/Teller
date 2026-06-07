@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback } from "react"
 import { invoke } from "@tauri-apps/api/core"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { ArrowUp01Icon, ArrowDown01Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { ListToolbar } from "@/components/ui/ListToolbar"
-import { rankByName } from "@/lib/listSearch"
+import { rankByName, sortBy } from "@/lib/listSearch"
+import type { SortDir } from "@/lib/listSearch"
 import type { StockItem, ProductComponent } from "@/types/stock"
 import type { Product } from "@/types/product"
 
@@ -17,6 +20,9 @@ const UNIT_LABEL: Record<string, string> = {
 
 const fmtQty = (n: number) =>
   n % 1 === 0 ? n.toLocaleString("pt-BR") : n.toFixed(2)
+
+type SortColumn = "name" | "unit" | "quantity" | "capacity"
+type SortState = { column: SortColumn; dir: SortDir } | null
 
 type StockFilter = "all" | "sellable" | "inputs"
 
@@ -59,6 +65,7 @@ export function StockBalance({ onAdjust }: Props) {
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<StockFilter>("all")
+  const [sort, setSort] = useState<SortState>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -107,7 +114,27 @@ export function StockBalance({ onAdjust }: Props) {
     return true
   })
 
-  const displayed = rankByName(byType, query)
+  const SORT_VALUE: Record<SortColumn, (item: StockItem) => string | number | null> = {
+    name: (i) => i.name,
+    unit: (i) => UNIT_LABEL[i.unit] ?? i.unit,
+    quantity: (i) => i.current_quantity,
+    capacity: (i) => {
+      const usages = usageMap.get(i.product_id) ?? []
+      if (!usages.length) return null
+      return Math.max(...usages.map(({ qtyPerUnit }) => Math.floor(i.current_quantity / qtyPerUnit)))
+    },
+  }
+
+  function toggleSort(column: SortColumn) {
+    setSort((prev) => {
+      if (!prev || prev.column !== column) return { column, dir: "asc" }
+      if (prev.dir === "asc") return { column, dir: "desc" }
+      return null
+    })
+  }
+
+  const ranked = rankByName(byType, query)
+  const displayed = sort ? sortBy(ranked, SORT_VALUE[sort.column], sort.dir) : ranked
 
   return (
     <div className="flex flex-col gap-4 p-6 w-full">
@@ -133,18 +160,35 @@ export function StockBalance({ onAdjust }: Props) {
           <table className="w-full text-sm">
             <thead className="bg-teller-card border-b border-teller-border">
               <tr>
-                <th className="px-4 py-2 text-left text-teller-muted font-medium">
-                  Produto
-                </th>
-                <th className="px-4 py-2 text-left text-teller-muted font-medium">
-                  Unidade
-                </th>
-                <th className="px-4 py-2 text-right text-teller-muted font-medium">
-                  Quantidade
-                </th>
-                <th className="px-4 py-2 text-left text-teller-muted font-medium">
-                  Capacidade estimada
-                </th>
+                {(
+                  [
+                    { col: "name" as SortColumn, label: "Produto", align: "left" },
+                    { col: "unit" as SortColumn, label: "Unidade", align: "left" },
+                    { col: "quantity" as SortColumn, label: "Quantidade", align: "right" },
+                    { col: "capacity" as SortColumn, label: "Capacidade estimada", align: "left" },
+                  ] as const
+                ).map(({ col, label, align }) => {
+                  const active = sort?.column === col
+                  const icon = active && sort?.dir === "desc" ? ArrowDown01Icon : ArrowUp01Icon
+                  return (
+                    <th
+                      key={col}
+                      className={`px-4 py-2 text-${align} text-teller-muted font-medium`}
+                    >
+                      <button
+                        onClick={() => toggleSort(col)}
+                        className={`inline-flex items-center gap-1 hover:text-teller-text transition-colors ${align === "right" ? "flex-row-reverse w-full justify-end" : ""}`}
+                      >
+                        {label}
+                        <HugeiconsIcon
+                          icon={icon}
+                          strokeWidth={1.5}
+                          className={`size-3.5 ${active ? "text-teller-text" : "opacity-0"}`}
+                        />
+                      </button>
+                    </th>
+                  )
+                })}
                 <th className="px-4 py-2 w-10" />
               </tr>
             </thead>
