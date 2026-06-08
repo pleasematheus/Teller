@@ -25,6 +25,6 @@ dist-ssr
 
 .env
 teller-dev.db
-teller-dev.db.wal
+teller-dev.db.*
 
 rtk.exe

@@ -29,6 +29,7 @@
 - Use the #### Scenario: blocks from OpenSpec specs as test case references.
 - Manual tests must be included as tasks and delegated to human testers, not automated.
 - Changes to the DuckDB database must include tasks for deleting the old version and creating the new one.
+- Every incompatible change to `schema.sql` requires (a) incrementing `DB_VERSION` in `db.rs` and (b) a new `src/db/migrations/NNN.sql` or Rust step appended to the `MIGRATIONS` list in `db.rs`. Never edit or remove released migration entries.
 - Spawn a subagent to run tests and report results back to the main agent.
 
 ## Stack
