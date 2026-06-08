@@ -572,6 +572,58 @@ pub fn get_sale_items(sale_id: i64, state: State<DbState>) -> Result<Vec<SaleIte
     Ok(rows)
 }
 
+#[derive(Serialize)]
+pub struct ProductSaleRow {
+    pub sale_id: i64,
+    pub sale_date: String,
+    pub quantity: i32,
+    pub unit_price: f64,
+    pub revenue: f64,
+}
+
+fn get_product_sales_history_raw(
+    conn: &Connection,
+    product_id: i64,
+) -> Result<Vec<ProductSaleRow>, String> {
+    let mut stmt = conn
+        .prepare(r#"
+            SELECT s.id, CAST(s.created_at AS VARCHAR),
+                   sp.quantity,
+                   CAST(sp.discounted_price AS DOUBLE),
+                   CAST(sp.discounted_price AS DOUBLE) * sp.quantity
+            FROM "Sales_Products" sp
+            JOIN "Sales" s ON s.id = sp.sale_id
+            WHERE sp.product_id = ? AND s.status = 'closed'
+            ORDER BY s.created_at DESC
+        "#)
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![product_id], |row| {
+            Ok(ProductSaleRow {
+                sale_id: row.get(0)?,
+                sale_date: row.get(1)?,
+                quantity: row.get(2)?,
+                unit_price: row.get(3)?,
+                revenue: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(rows)
+}
+
+#[tauri::command]
+pub fn get_product_sales_history(
+    product_id: i64,
+    state: State<DbState>,
+) -> Result<Vec<ProductSaleRow>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    get_product_sales_history_raw(&conn, product_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1325,6 +1377,71 @@ mod tests {
         assert_eq!(warnings.len(), 1, "flag=false deve gerar aviso de estoque insuficiente");
         let status: String = conn.query_row(r#"SELECT status FROM "Sales" WHERE id = ?"#, params![sale_id], |r| r.get(0)).unwrap();
         assert_eq!(status, "closed", "Venda deve prosseguir mesmo com aviso");
+    }
+
+    #[test]
+    fn get_product_sales_history_returns_closed_sales() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let product_id = insert_product(&conn, "Foto", true);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 2, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let items = vec![SaleItemInput { product_id, quantity: 2, discount: 0.0 }];
+        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 20.0, installments: 1 }];
+        conn.execute_batch("BEGIN").unwrap();
+        do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let rows = get_product_sales_history_raw(&conn, product_id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].sale_id, sale_id);
+        assert_eq!(rows[0].quantity, 2);
+        assert!((rows[0].unit_price - 10.0).abs() < 1e-6);
+        assert!((rows[0].revenue - 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn get_product_sales_history_returns_empty_when_no_sales() {
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Sem vendas", true);
+        let rows = get_product_sales_history_raw(&conn, product_id).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn get_product_sales_history_ignores_open_drafts() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        let product_id = insert_product(&conn, "Foto", true);
+
+        let sale_id: i64 = conn.query_row(
+            r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 10.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+            params![user_id], |r| r.get(0),
+        ).unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 1, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, product_id],
+        ).unwrap();
+
+        let rows = get_product_sales_history_raw(&conn, product_id).unwrap();
+        assert!(rows.is_empty(), "rascunhos abertos nao devem aparecer no historico");
     }
 
     #[test]

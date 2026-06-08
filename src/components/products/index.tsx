@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { ProductList } from "./ProductList"
 import { ProductForm } from "./ProductForm"
+import { ProductDetailTabs } from "./ProductDetailTabs"
 import type { Product, PricingRates } from "@/types/product"
 import type { StockItem } from "@/types/stock"
 
@@ -117,14 +118,24 @@ export function Products() {
 
       {formContent && (
         <div className={activeView === "form" ? "flex flex-1 flex-col" : "hidden"}>
-          <ProductForm
-            key={formContent.kind === "edit" ? formContent.product.id : formKey}
-            product={formContent.kind === "edit" ? formContent.product : null}
-            rates={rates}
-            stockQuantity={formContent.kind === "edit" ? stockByProduct.get(formContent.product.id) : undefined}
-            onCancel={closeForm}
-            onSaved={async () => { await loadProducts(); closeForm() }}
-          />
+          {formContent.kind === "edit" ? (
+            <ProductDetailTabs
+              key={formContent.product.id}
+              product={formContent.product}
+              rates={rates}
+              stockQuantity={stockByProduct.get(formContent.product.id)}
+              onCancel={closeForm}
+              onSaved={async () => { await loadProducts(); closeForm() }}
+            />
+          ) : (
+            <ProductForm
+              key={formKey}
+              product={null}
+              rates={rates}
+              onCancel={closeForm}
+              onSaved={async () => { await loadProducts(); closeForm() }}
+            />
+          )}
         </div>
       )}
     </div>

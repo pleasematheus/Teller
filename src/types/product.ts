@@ -52,3 +52,31 @@ export interface MarginBreakdown {
   below_cost: boolean
   feasible: boolean
 }
+
+export interface ProductSaleRow {
+  sale_id: number
+  sale_date: string
+  quantity: number
+  unit_price: number
+  revenue: number
+}
+
+export interface ProductPurchaseRow {
+  purchase_id: number
+  purchase_date: string
+  quantity: number
+  unit_cost: number
+  total: number
+}
+
+export interface PricingBreakdown {
+  cmv: number
+  cv: number
+  df: number
+  investment: number
+  profit_margin: number
+  markup_percent: number
+  final_price: number
+  below_cost: boolean
+  feasible: boolean
+}

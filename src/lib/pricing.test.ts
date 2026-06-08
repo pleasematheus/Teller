@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { computePrice, computeMaxDiscount, applyGlobalDiscount, computeMarginFromPrice, computeCmvFromComponents, itemDiscountFraction } from "./pricing"
+import { computePrice, computeMaxDiscount, applyGlobalDiscount, computeMarginFromPrice, computeCmvFromComponents, itemDiscountFraction, computePricingBreakdown } from "./pricing"
 import type { PricingRates } from "@/types/product"
 
 const zeroRates: PricingRates = {
@@ -235,6 +235,41 @@ describe("itemDiscountFraction", () => {
 
   it("lineTotal zero retorna 0 (sem divisão por zero)", () => {
     expect(itemDiscountFraction(50, 0)).toBe(0)
+  })
+})
+
+describe("computePricingBreakdown", () => {
+  // realRates: cv=0.1, df=0.05, invest=0.02
+  // product: cost=100, loss=0.1, final_price=200 → cmv=100/0.9≈111.11
+
+  it("sem componentes: breakdown a partir do preco final", () => {
+    const product = { cost_price: 100, expected_loss_rate: 0.1, final_price: 200 }
+    const result = computePricingBreakdown(product, realRates)
+    expect(result.final_price).toBe(200)
+    expect(result.cmv).toBeCloseTo(100 / 0.9, 4)
+    expect(result.cv).toBeCloseTo(0.1 * 200)
+    expect(result.df).toBeCloseTo(0.05 * 200)
+    expect(result.investment).toBeCloseTo(0.02 * 200)
+    expect(result.profit_margin).toBeGreaterThan(0)
+    expect(result.feasible).toBe(true)
+    expect(result.below_cost).toBe(false)
+  })
+
+  it("preco abaixo do custo: below_cost true e feasible false", () => {
+    const product = { cost_price: 100, expected_loss_rate: 0.0, final_price: 50 }
+    const result = computePricingBreakdown(product, realRates)
+    expect(result.below_cost).toBe(true)
+    expect(result.feasible).toBe(false)
+    expect(result.cmv).toBeCloseTo(100)
+  })
+
+  it("sem componentes (custo zero): cv/df/investment calculados sobre preco final", () => {
+    const product = { cost_price: 0, expected_loss_rate: 0.0, final_price: 100 }
+    const result = computePricingBreakdown(product, realRates)
+    expect(result.cv).toBeCloseTo(10)
+    expect(result.df).toBeCloseTo(5)
+    expect(result.investment).toBeCloseTo(2)
+    expect(result.cmv).toBeCloseTo(0)
   })
 })
 

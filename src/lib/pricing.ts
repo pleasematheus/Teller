@@ -1,4 +1,4 @@
-import type { PricingRates, PriceBreakdown, MarginBreakdown } from "@/types/product"
+import type { PricingRates, PriceBreakdown, MarginBreakdown, PricingBreakdown } from "@/types/product"
 
 export function computePrice(
   costPrice: number,
@@ -109,6 +109,35 @@ export function computeCmvFromComponents(components: ComponentForCmv[]): number 
     (sum, c) => sum + (c.cost_price / (1 - c.expected_loss_rate)) * c.quantity,
     0,
   )
+}
+
+type ProductForBreakdown = {
+  cost_price: number
+  expected_loss_rate: number
+  final_price: number
+}
+
+export function computePricingBreakdown(
+  product: ProductForBreakdown,
+  rates: PricingRates,
+): PricingBreakdown {
+  const margin = computeMarginFromPrice(
+    product.cost_price,
+    product.expected_loss_rate,
+    product.final_price,
+    rates,
+  )
+  return {
+    cmv: margin.cmv,
+    cv: rates.cv * product.final_price,
+    df: rates.df * product.final_price,
+    investment: rates.investment_rate * product.final_price,
+    profit_margin: margin.profit_margin,
+    markup_percent: margin.markup_percent,
+    final_price: product.final_price,
+    below_cost: margin.below_cost,
+    feasible: margin.feasible,
+  }
 }
 
 export function itemDiscountFraction(value: number, lineTotal: number): number {
