@@ -9,8 +9,9 @@ import { PagamentosSection } from "./PagamentosSection";
 import { UsuariosSection } from "./UsuariosSection";
 import { UnidadesSection } from "./UnidadesSection";
 import { SistemaSection } from "./SistemaSection";
+import { VendasSection } from "./VendasSection";
 
-type Section = "empresa" | "pagamentos" | "usuarios" | "unidades" | "sistema";
+type Section = "empresa" | "pagamentos" | "usuarios" | "unidades" | "vendas" | "sistema";
 
 type Props = {
   user: AuthUser;
@@ -23,6 +24,7 @@ const NAV_ITEMS: { id: Section; label: string }[] = [
   { id: "pagamentos", label: "Formas de Pagamento" },
   { id: "unidades", label: "Unidades de Medida" },
   { id: "usuarios", label: "Usuários" },
+  { id: "vendas", label: "Vendas" },
   { id: "sistema", label: "Sistema" },
 ];
 
@@ -83,6 +85,7 @@ export function ConfiguracoesModule({ user, theme, onThemeChange }: Props) {
         {section === "pagamentos" && <PagamentosSection />}
         {section === "unidades" && <UnidadesSection />}
         {section === "usuarios" && <UsuariosSection user={user} />}
+        {section === "vendas" && <VendasSection />}
         {section === "sistema" && <SistemaSection />}
       </main>
     </div>
