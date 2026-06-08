@@ -20,18 +20,23 @@ pub(crate) struct UserRow {
     pub active: bool,
 }
 
-pub(crate) fn lookup_user(conn: &duckdb::Connection, identifier: &str) -> Result<Option<UserRow>, String> {
+pub(crate) fn lookup_user(
+    conn: &duckdb::Connection,
+    identifier: &str,
+) -> Result<Option<UserRow>, String> {
     // Single query for both nickname and numeric-ID lookup. Avoids running a
     // query_row that returns QueryReturnedNoRows, which leaves DuckDB in a bad
     // connection state and causes a crash on the next operation.
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT id, name, nickname, password_hash, active
             FROM "Users"
             WHERE lower(nickname) = lower(?) OR id = TRY_CAST(? AS INTEGER)
             ORDER BY CASE WHEN lower(nickname) = lower(?) THEN 0 ELSE 1 END
             LIMIT 1
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let mut rows = stmt
@@ -112,11 +117,9 @@ pub fn create_user(
 pub fn check_business_setup(state: State<DbState>) -> Result<bool, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let count: i64 = conn
-        .query_row(
-            r#"SELECT COUNT(*) FROM "Business_Settings""#,
-            [],
-            |row| row.get(0),
-        )
+        .query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |row| {
+            row.get(0)
+        })
         .map_err(|e| e.to_string())?;
     Ok(count > 0)
 }
@@ -141,8 +144,14 @@ pub fn create_business_settings(
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     // Columns are DOUBLE (not DECIMAL): Option<f64> binds and reads correctly via params!.
-    let ir: &dyn duckdb::types::ToSql = match &investment_rate { Some(v) => v, None => &duckdb::types::Null };
-    let pm: &dyn duckdb::types::ToSql = match &profit_margin { Some(v) => v, None => &duckdb::types::Null };
+    let ir: &dyn duckdb::types::ToSql = match &investment_rate {
+        Some(v) => v,
+        None => &duckdb::types::Null,
+    };
+    let pm: &dyn duckdb::types::ToSql = match &profit_margin {
+        Some(v) => v,
+        None => &duckdb::types::Null,
+    };
     conn.execute(
         r#"INSERT INTO "Business_Settings" (name, investment_rate, profit_margin, updated_at, created_at)
            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
@@ -175,7 +184,11 @@ pub fn login(identifier: String, password: String, state: State<DbState>) -> Res
         return Err("Credenciais inválidas".to_string());
     }
 
-    Ok(User { id: row.id, name: row.name, nickname: row.nickname })
+    Ok(User {
+        id: row.id,
+        name: row.name,
+        nickname: row.nickname,
+    })
 }
 
 #[tauri::command]
@@ -229,7 +242,9 @@ pub(crate) fn insert_user(conn: &duckdb::Connection, name: &str, nickname: &str,
 
 #[cfg(test)]
 fn find_user_in_test(conn: &duckdb::Connection, identifier: &str) -> Option<String> {
-    lookup_user(conn, identifier).unwrap().map(|row| row.nickname)
+    lookup_user(conn, identifier)
+        .unwrap()
+        .map(|row| row.nickname)
 }
 
 #[cfg(test)]
@@ -295,7 +310,9 @@ mod tests {
     fn check_business_setup_empty_returns_false() {
         let conn = test_db();
         let count: i64 = conn
-            .query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |r| r.get(0))
+            .query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -305,7 +322,9 @@ mod tests {
         let conn = test_db();
         insert_business_settings(&conn, "Minha Empresa");
         let count: i64 = conn
-            .query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |r| r.get(0))
+            .query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert!(count > 0);
     }
@@ -323,9 +342,18 @@ mod tests {
         assert!((0.0_f64..=1.0).contains(&0.5));
     }
 
-    fn insert_business_settings_with_rates(conn: &duckdb::Connection, name: &str, ir: Option<f64>, pm: Option<f64>) {
-        let ir_sql = ir.map(|v| format!("{:.4}", v)).unwrap_or_else(|| "NULL".to_string());
-        let pm_sql = pm.map(|v| format!("{:.4}", v)).unwrap_or_else(|| "NULL".to_string());
+    fn insert_business_settings_with_rates(
+        conn: &duckdb::Connection,
+        name: &str,
+        ir: Option<f64>,
+        pm: Option<f64>,
+    ) {
+        let ir_sql = ir
+            .map(|v| format!("{:.4}", v))
+            .unwrap_or_else(|| "NULL".to_string());
+        let pm_sql = pm
+            .map(|v| format!("{:.4}", v))
+            .unwrap_or_else(|| "NULL".to_string());
         conn.execute(
             &format!(
                 r#"INSERT INTO "Business_Settings" (name, investment_rate, profit_margin, updated_at, created_at)
@@ -337,7 +365,7 @@ mod tests {
         .unwrap();
     }
 
-#[test]
+    #[test]
     fn create_business_settings_stores_rates_correctly() {
         let conn = test_db();
         insert_business_settings_with_rates(&conn, "Empresa Teste", Some(0.10), Some(0.20));
@@ -380,12 +408,18 @@ mod tests {
         let conn = test_db();
         insert_user(&conn, "Ana", "ana", true);
         let user_id: i64 = conn
-            .query_row(r#"SELECT id FROM "Users" WHERE nickname = 'ana'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT id FROM "Users" WHERE nickname = 'ana'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let mut stmt = conn
             .prepare(r#"SELECT value FROM "User_Settings" WHERE user_id = ? AND key = ?"#)
             .unwrap();
-        let mut rows = stmt.query_map(params![user_id, "theme"], |r| r.get::<_, String>(0)).unwrap();
+        let mut rows = stmt
+            .query_map(params![user_id, "theme"], |r| r.get::<_, String>(0))
+            .unwrap();
         assert!(rows.next().is_none());
     }
 
@@ -394,12 +428,17 @@ mod tests {
         let conn = test_db();
         insert_user(&conn, "Ana", "ana", true);
         let user_id: i64 = conn
-            .query_row(r#"SELECT id FROM "Users" WHERE nickname = 'ana'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT id FROM "Users" WHERE nickname = 'ana'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         conn.execute(
             r#"INSERT INTO "User_Settings" (user_id, key, value) VALUES (?, ?, ?)"#,
             params![user_id, "theme", "dark"],
-        ).unwrap();
+        )
+        .unwrap();
         let value: String = conn
             .query_row(
                 r#"SELECT value FROM "User_Settings" WHERE user_id = ? AND key = ?"#,
@@ -415,18 +454,24 @@ mod tests {
         let conn = test_db();
         insert_user(&conn, "Ana", "ana", true);
         let user_id: i64 = conn
-            .query_row(r#"SELECT id FROM "Users" WHERE nickname = 'ana'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT id FROM "Users" WHERE nickname = 'ana'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         conn.execute(
             r#"INSERT INTO "User_Settings" (user_id, key, value) VALUES (?, ?, ?)"#,
             params![user_id, "theme", "dark"],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             r#"INSERT INTO "User_Settings" (user_id, key, value)
                VALUES (?, ?, ?)
                ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value"#,
             params![user_id, "theme", "light"],
-        ).unwrap();
+        )
+        .unwrap();
         let value: String = conn
             .query_row(
                 r#"SELECT value FROM "User_Settings" WHERE user_id = ? AND key = ?"#,

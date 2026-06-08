@@ -48,7 +48,10 @@ fn read_db_version(conn: &Connection) -> Result<u32, String> {
         |r| r.get::<_, String>(0),
     )
     .map_err(|_| "db_version ausente em App_Meta (banco anômalo)".to_string())
-    .and_then(|v| v.parse::<u32>().map_err(|e| format!("db_version inválido: {e}")))
+    .and_then(|v| {
+        v.parse::<u32>()
+            .map_err(|e| format!("db_version inválido: {e}"))
+    })
 }
 
 fn backup_db_file(path: &std::path::Path, stored: u32) -> Result<std::path::PathBuf, String> {
@@ -109,7 +112,10 @@ fn run_migrations_inner(
         ));
     }
 
-    for step in migrations.iter().filter(|s| s.version > stored && s.version <= target) {
+    for step in migrations
+        .iter()
+        .filter(|s| s.version > stored && s.version <= target)
+    {
         match &step.kind {
             MigrationKind::Sql(sql) => apply_sql_step(conn, sql, step.version)?,
             MigrationKind::Rust(f) => apply_rust_step(conn, *f, step.version)?,
@@ -255,7 +261,10 @@ mod migration_tests {
     fn downgrade_returns_error_and_leaves_db_intact() {
         let conn = mini_db(15);
         let err = run_migrations_inner(&conn, &[], 10).unwrap_err();
-        assert!(err.contains("Downgrade"), "expected downgrade error, got: {err}");
+        assert!(
+            err.contains("Downgrade"),
+            "expected downgrade error, got: {err}"
+        );
         assert_eq!(read_db_version(&conn).unwrap(), 15);
     }
 
@@ -291,7 +300,10 @@ mod migration_tests {
     #[test]
     fn single_step_stamps_target_version() {
         let conn = mini_db(6);
-        let steps = [MigrationStep { version: 7, kind: MigrationKind::Rust(noop) }];
+        let steps = [MigrationStep {
+            version: 7,
+            kind: MigrationKind::Rust(noop),
+        }];
         run_migrations_inner(&conn, &steps, 7).unwrap();
         assert_eq!(read_db_version(&conn).unwrap(), 7);
     }
@@ -301,9 +313,18 @@ mod migration_tests {
     fn multi_step_jump_applies_all_and_stamps_final() {
         let conn = mini_db(6);
         let steps = [
-            MigrationStep { version: 7, kind: MigrationKind::Rust(noop) },
-            MigrationStep { version: 8, kind: MigrationKind::Rust(noop) },
-            MigrationStep { version: 9, kind: MigrationKind::Rust(noop) },
+            MigrationStep {
+                version: 7,
+                kind: MigrationKind::Rust(noop),
+            },
+            MigrationStep {
+                version: 8,
+                kind: MigrationKind::Rust(noop),
+            },
+            MigrationStep {
+                version: 9,
+                kind: MigrationKind::Rust(noop),
+            },
         ];
         run_migrations_inner(&conn, &steps, 9).unwrap();
         assert_eq!(read_db_version(&conn).unwrap(), 9);
@@ -333,7 +354,8 @@ mod migration_tests {
                 [],
             )
             .unwrap();
-            conn.execute(r#"INSERT INTO "Sentinel" VALUES (42)"#, []).unwrap();
+            conn.execute(r#"INSERT INTO "Sentinel" VALUES (42)"#, [])
+                .unwrap();
             // conn dropped: checkpoints v10 to file
         }
 
@@ -350,8 +372,14 @@ mod migration_tests {
             };
 
             let steps = [
-                MigrationStep { version: 11, kind: MigrationKind::Rust(noop) },
-                MigrationStep { version: 12, kind: MigrationKind::Rust(fail) },
+                MigrationStep {
+                    version: 11,
+                    kind: MigrationKind::Rust(noop),
+                },
+                MigrationStep {
+                    version: 12,
+                    kind: MigrationKind::Rust(fail),
+                },
             ];
 
             let result = {
@@ -376,8 +404,9 @@ mod migration_tests {
                 )
                 .unwrap();
             assert_eq!(version, "10", "version should be 10 after restore");
-            let sentinel: i32 =
-                conn.query_row(r#"SELECT "v" FROM "Sentinel""#, [], |r| r.get(0)).unwrap();
+            let sentinel: i32 = conn
+                .query_row(r#"SELECT "v" FROM "Sentinel""#, [], |r| r.get(0))
+                .unwrap();
             assert_eq!(sentinel, 42, "sentinel data should be intact");
         }
 
@@ -476,7 +505,10 @@ mod app_meta_tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 0, "App_Meta deve conter apenas db_version e app_version");
+        assert_eq!(
+            count, 0,
+            "App_Meta deve conter apenas db_version e app_version"
+        );
     }
 }
 
@@ -522,14 +554,7 @@ mod legacy_decimal_tests {
             r#"INSERT INTO "Products"
                (name, markup, cost_price, final_price, expected_loss_rate, profit_margin)
                VALUES (?, ?, ?, ?, ?, ?)"#,
-            params![
-                "P",
-                1.25_f64,
-                10.0_f64,
-                12.5_f64,
-                0.0732_f64,
-                0.3456_f64
-            ],
+            params!["P", 1.25_f64, 10.0_f64, 12.5_f64, 0.0732_f64, 0.3456_f64],
         )
         .unwrap();
 
@@ -544,8 +569,16 @@ mod legacy_decimal_tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .unwrap();
-        assert!((margin - 0.3456).abs() < 1e-9, "profit_margin got {}", margin);
-        assert!((loss - 0.0732).abs() < 1e-9, "expected_loss_rate got {}", loss);
+        assert!(
+            (margin - 0.3456).abs() < 1e-9,
+            "profit_margin got {}",
+            margin
+        );
+        assert!(
+            (loss - 0.0732).abs() < 1e-9,
+            "expected_loss_rate got {}",
+            loss
+        );
         assert!((markup - 1.25).abs() < 1e-9, "markup got {}", markup);
         assert!((cost - 10.0).abs() < 1e-9, "cost_price got {}", cost);
         assert!((price - 12.5).abs() < 1e-9, "final_price got {}", price);

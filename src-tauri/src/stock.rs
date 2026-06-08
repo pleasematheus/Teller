@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::DbState;
-use crate::products::{create_product_in_tx, get_pricing_rates_raw, get_product_loss_rate_raw, validate_loss_mode};
+use crate::products::{
+    create_product_in_tx, get_pricing_rates_raw, get_product_loss_rate_raw, validate_loss_mode,
+};
 
 #[derive(Serialize)]
 pub struct StockItem {
@@ -106,12 +108,14 @@ pub fn list_stock(state: State<DbState>) -> Result<Vec<StockItem>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT p.id, p.name, p.unit, COALESCE(s.current_quantity, 0.0)
             FROM "Products" p
             LEFT JOIN "Stock" s ON s.product_id = p.id
             ORDER BY p.name
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let items = stmt
@@ -165,7 +169,8 @@ fn create_purchase_draft(
         }
 
         if let Some(pid) = item.product_id {
-            let effective_loss = item.loss_rate
+            let effective_loss = item
+                .loss_rate
                 .unwrap_or_else(|| get_product_loss_rate_raw(conn, pid));
             conn.execute(
                 r#"INSERT INTO "Purchase_Items"
@@ -173,8 +178,14 @@ fn create_purchase_draft(
                     creates_stock, loss_rate, loss_mode, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, true, ?, ?, CURRENT_TIMESTAMP)"#,
                 params![
-                    purchase_id, pid, item.quantity, item.unit_cost,
-                    item.final_price, item.unit_qty, effective_loss, loss_mode
+                    purchase_id,
+                    pid,
+                    item.quantity,
+                    item.unit_cost,
+                    item.final_price,
+                    item.unit_qty,
+                    effective_loss,
+                    loss_mode
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -193,9 +204,18 @@ fn create_purchase_draft(
                     new_product_sellable, created_at)
                    VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
                 params![
-                    purchase_id, item.quantity, item.unit_cost, item.final_price, item.unit_qty,
-                    creates_stock, effective_loss, loss_mode,
-                    new_name, new_unit, new_desc, new_sellable
+                    purchase_id,
+                    item.quantity,
+                    item.unit_cost,
+                    item.final_price,
+                    item.unit_qty,
+                    creates_stock,
+                    effective_loss,
+                    loss_mode,
+                    new_name,
+                    new_unit,
+                    new_desc,
+                    new_sellable
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -218,7 +238,8 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT pi.id, pi.product_id,
                    CAST(pi.quantity AS DOUBLE),
                    CAST(pi.unit_cost AS DOUBLE),
@@ -233,7 +254,8 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
                    pi.new_product_sellable
             FROM "Purchase_Items" pi
             WHERE pi.purchase_id = ?
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let mut items: Vec<PurchaseItemRecord> = stmt
@@ -261,9 +283,13 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
     // Resolve new-product items: create the product, backfill product_id.
     for item in &mut items {
         if item.product_id.is_none() {
-            let name = item.new_product_name.as_deref()
+            let name = item
+                .new_product_name
+                .as_deref()
                 .ok_or_else(|| "Item sem product_id e sem new_product_name".to_string())?;
-            let unit = item.new_product_unit.as_deref()
+            let unit = item
+                .new_product_unit
+                .as_deref()
                 .ok_or_else(|| "Item sem product_id e sem new_product_unit".to_string())?;
             let desc = item.new_product_description.as_deref();
             let sellable = item.new_product_sellable.unwrap_or(false);
@@ -287,7 +313,8 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
 
         let pid = item.product_id.expect("product_id resolved above");
 
-        let stock_qty = item.unit_qty
+        let stock_qty = item
+            .unit_qty
             .map(|f| item.quantity * f)
             .unwrap_or(item.quantity);
 
@@ -308,7 +335,11 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
 
         let line_value = item.quantity * item.unit_cost;
-        let freight_share = if subtotal > 0.0 { freight * line_value / subtotal } else { 0.0 };
+        let freight_share = if subtotal > 0.0 {
+            freight * line_value / subtotal
+        } else {
+            0.0
+        };
         let lot_cost = line_value + freight_share;
         let custo_unit_lote = lot_cost / stock_qty;
 
@@ -466,13 +497,15 @@ pub fn list_stock_movements(
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT id, quantity, movement_type, motive,
                    CAST(created_at AS VARCHAR), sale_id
             FROM "Stock_Movements"
             WHERE product_id = ?
             ORDER BY created_at DESC
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let movements = stmt
@@ -611,7 +644,11 @@ pub fn remove_product_component(id: i64, state: State<DbState>) -> Result<(), St
 }
 
 #[tauri::command]
-pub fn update_product_component(id: i64, quantity: i64, state: State<DbState>) -> Result<(), String> {
+pub fn update_product_component(
+    id: i64,
+    quantity: i64,
+    state: State<DbState>,
+) -> Result<(), String> {
     if quantity <= 0 {
         return Err("Quantidade deve ser maior que zero".to_string());
     }
@@ -643,13 +680,15 @@ pub fn list_purchases(
 
     let purchases = if let Some(ref s) = status {
         let mut stmt = conn
-            .prepare(r#"
+            .prepare(
+                r#"
                 SELECT id, CAST(freight AS DOUBLE), CAST(total_cost AS DOUBLE),
                        status, CAST(created_at AS VARCHAR)
                 FROM "Purchases"
                 WHERE status = ?
                 ORDER BY created_at DESC
-            "#)
+            "#,
+            )
             .map_err(|e| e.to_string())?;
         stmt.query_map(params![s], |row| {
             Ok(Purchase {
@@ -665,12 +704,14 @@ pub fn list_purchases(
         .map_err(|e| e.to_string())?
     } else {
         let mut stmt = conn
-            .prepare(r#"
+            .prepare(
+                r#"
                 SELECT id, CAST(freight AS DOUBLE), CAST(total_cost AS DOUBLE),
                        status, CAST(created_at AS VARCHAR)
                 FROM "Purchases"
                 ORDER BY created_at DESC
-            "#)
+            "#,
+            )
             .map_err(|e| e.to_string())?;
         stmt.query_map([], |row| {
             Ok(Purchase {
@@ -690,7 +731,10 @@ pub fn list_purchases(
 }
 
 #[tauri::command]
-pub fn get_purchase_draft(purchase_id: i64, state: State<DbState>) -> Result<PurchaseDraft, String> {
+pub fn get_purchase_draft(
+    purchase_id: i64,
+    state: State<DbState>,
+) -> Result<PurchaseDraft, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let (freight, status): (f64, String) = conn
         .query_row(
@@ -703,7 +747,8 @@ pub fn get_purchase_draft(purchase_id: i64, state: State<DbState>) -> Result<Pur
         return Err("Compra já fechada não pode ser editada".to_string());
     }
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT pi.product_id,
                    COALESCE(p.name, pi.new_product_name),
                    COALESCE(p.unit, pi.new_product_unit),
@@ -717,7 +762,8 @@ pub fn get_purchase_draft(purchase_id: i64, state: State<DbState>) -> Result<Pur
             LEFT JOIN "Products" p ON p.id = pi.product_id
             WHERE pi.purchase_id = ?
             ORDER BY pi.id
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
     let items = stmt
         .query_map(params![purchase_id], |row| {
@@ -739,7 +785,11 @@ pub fn get_purchase_draft(purchase_id: i64, state: State<DbState>) -> Result<Pur
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    Ok(PurchaseDraft { id: purchase_id, freight, items })
+    Ok(PurchaseDraft {
+        id: purchase_id,
+        freight,
+        items,
+    })
 }
 
 #[tauri::command]
@@ -751,15 +801,22 @@ pub fn update_purchase(
 ) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let status: String = conn
-        .query_row(r#"SELECT status FROM "Purchases" WHERE id = ?"#, params![purchase_id], |r| r.get(0))
+        .query_row(
+            r#"SELECT status FROM "Purchases" WHERE id = ?"#,
+            params![purchase_id],
+            |r| r.get(0),
+        )
         .map_err(|_| format!("Compra {} não encontrada", purchase_id))?;
     if status != "open" {
         return Err("Compra já fechada não pode ser editada".to_string());
     }
     conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
     let result = (|| -> Result<(), String> {
-        conn.execute(r#"DELETE FROM "Purchase_Items" WHERE purchase_id = ?"#, params![purchase_id])
-            .map_err(|e| e.to_string())?;
+        conn.execute(
+            r#"DELETE FROM "Purchase_Items" WHERE purchase_id = ?"#,
+            params![purchase_id],
+        )
+        .map_err(|e| e.to_string())?;
         let total_cost: f64 = items.iter().map(|i| i.quantity * i.unit_cost).sum::<f64>() + freight;
         conn.execute(
             r#"UPDATE "Purchases" SET freight = ?, total_cost = ? WHERE id = ?"#,
@@ -768,7 +825,8 @@ pub fn update_purchase(
         .map_err(|e| e.to_string())?;
         for item in &items {
             let has_product_id = item.product_id.is_some();
-            let has_new_product = item.new_product_name.is_some() && item.new_product_unit.is_some();
+            let has_new_product =
+                item.new_product_name.is_some() && item.new_product_unit.is_some();
             if has_product_id == has_new_product {
                 return Err(
                     "Cada item deve ter exatamente um produto existente ou dados de produto novo"
@@ -779,7 +837,8 @@ pub fn update_purchase(
             validate_loss_mode(loss_mode)?;
 
             if let Some(pid) = item.product_id {
-                let effective_loss = item.loss_rate
+                let effective_loss = item
+                    .loss_rate
                     .unwrap_or_else(|| get_product_loss_rate_raw(&conn, pid));
                 conn.execute(
                     r#"INSERT INTO "Purchase_Items"
@@ -787,8 +846,14 @@ pub fn update_purchase(
                         unit_qty, creates_stock, loss_rate, loss_mode, created_at)
                        VALUES (?, ?, ?, ?, ?, ?, true, ?, ?, CURRENT_TIMESTAMP)"#,
                     params![
-                        purchase_id, pid, item.quantity, item.unit_cost,
-                        item.final_price, item.unit_qty, effective_loss, loss_mode,
+                        purchase_id,
+                        pid,
+                        item.quantity,
+                        item.unit_cost,
+                        item.final_price,
+                        item.unit_qty,
+                        effective_loss,
+                        loss_mode,
                     ],
                 )
                 .map_err(|e| e.to_string())?;
@@ -807,9 +872,18 @@ pub fn update_purchase(
                         new_product_sellable, created_at)
                        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
                     params![
-                        purchase_id, item.quantity, item.unit_cost, item.final_price,
-                        item.unit_qty, creates_stock, effective_loss, loss_mode,
-                        new_name, new_unit, new_desc, new_sellable,
+                        purchase_id,
+                        item.quantity,
+                        item.unit_cost,
+                        item.final_price,
+                        item.unit_qty,
+                        creates_stock,
+                        effective_loss,
+                        loss_mode,
+                        new_name,
+                        new_unit,
+                        new_desc,
+                        new_sellable,
                     ],
                 )
                 .map_err(|e| e.to_string())?;
@@ -829,17 +903,27 @@ pub fn update_purchase(
 pub fn delete_purchase(purchase_id: i64, state: State<DbState>) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let status: String = conn
-        .query_row(r#"SELECT status FROM "Purchases" WHERE id = ?"#, params![purchase_id], |r| r.get(0))
+        .query_row(
+            r#"SELECT status FROM "Purchases" WHERE id = ?"#,
+            params![purchase_id],
+            |r| r.get(0),
+        )
         .map_err(|_| format!("Compra {} não encontrada", purchase_id))?;
     if status != "open" {
         return Err("Compra fechada não pode ser excluída".to_string());
     }
     conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
     let result = (|| -> Result<(), String> {
-        conn.execute(r#"DELETE FROM "Purchase_Items" WHERE purchase_id = ?"#, params![purchase_id])
-            .map_err(|e| e.to_string())?;
-        conn.execute(r#"DELETE FROM "Purchases" WHERE id = ?"#, params![purchase_id])
-            .map_err(|e| e.to_string())?;
+        conn.execute(
+            r#"DELETE FROM "Purchase_Items" WHERE purchase_id = ?"#,
+            params![purchase_id],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            r#"DELETE FROM "Purchases" WHERE id = ?"#,
+            params![purchase_id],
+        )
+        .map_err(|e| e.to_string())?;
         Ok(())
     })();
     if result.is_err() {
@@ -864,7 +948,8 @@ fn list_product_purchases_raw(
     product_id: i64,
 ) -> Result<Vec<ProductPurchaseRow>, String> {
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT p.id, CAST(p.created_at AS VARCHAR),
                    CAST(pi.quantity AS DOUBLE),
                    CAST(pi.unit_cost AS DOUBLE),
@@ -873,7 +958,8 @@ fn list_product_purchases_raw(
             JOIN "Purchases" p ON p.id = pi.purchase_id
             WHERE pi.product_id = ? AND p.status = 'closed'
             ORDER BY p.created_at DESC
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
@@ -903,13 +989,19 @@ pub fn list_product_purchases(
 }
 
 #[cfg(test)]
-pub(crate) fn add_product_component_in_test(conn: &Connection, parent_id: i64, child_id: i64, quantity: i64) {
+pub(crate) fn add_product_component_in_test(
+    conn: &Connection,
+    parent_id: i64,
+    child_id: i64,
+    quantity: i64,
+) {
     conn.execute(
         r#"INSERT INTO "Product_Components"
            (parent_id, child_id, quantity, updated_at, created_at)
            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
         params![parent_id, child_id, quantity],
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 #[cfg(test)]
@@ -926,13 +1018,21 @@ pub(crate) fn add_product_component_in_test_result(
         return Err("Quantidade deve ser maior que zero".to_string());
     }
     let parent_sellable: bool = conn
-        .query_row(r#"SELECT sellable FROM "Products" WHERE id = ?"#, params![parent_id], |r| r.get(0))
+        .query_row(
+            r#"SELECT sellable FROM "Products" WHERE id = ?"#,
+            params![parent_id],
+            |r| r.get(0),
+        )
         .map_err(|e| e.to_string())?;
     if !parent_sellable {
         return Err("Apenas produtos vendáveis podem ter componentes".to_string());
     }
     let child_sellable: bool = conn
-        .query_row(r#"SELECT sellable FROM "Products" WHERE id = ?"#, params![child_id], |r| r.get(0))
+        .query_row(
+            r#"SELECT sellable FROM "Products" WHERE id = ?"#,
+            params![child_id],
+            |r| r.get(0),
+        )
         .map_err(|e| e.to_string())?;
     if child_sellable {
         return Err("Componentes devem ser insumos (não vendáveis)".to_string());
@@ -951,7 +1051,8 @@ pub(crate) fn add_product_component_in_test_result(
         r#"INSERT INTO "Product_Components" (parent_id, child_id, quantity, updated_at, created_at)
            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
         params![parent_id, child_id, quantity],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -994,19 +1095,36 @@ mod tests {
         conn.execute_batch("COMMIT").unwrap();
 
         let status: String = conn
-            .query_row(r#"SELECT status FROM "Purchases" WHERE id = ?"#, params![purchase_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT status FROM "Purchases" WHERE id = ?"#,
+                params![purchase_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(status, "open");
 
         let movements: i64 = conn
-            .query_row(r#"SELECT COUNT(*) FROM "Stock_Movements""#, [], |r| r.get(0))
+            .query_row(r#"SELECT COUNT(*) FROM "Stock_Movements""#, [], |r| {
+                r.get(0)
+            })
             .unwrap();
-        assert_eq!(movements, 0, "No stock movements should be created on draft");
+        assert_eq!(
+            movements, 0,
+            "No stock movements should be created on draft"
+        );
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert!((cost - 10.0).abs() < 1e-9, "cost_price must not change on draft, got {}", cost);
+        assert!(
+            (cost - 10.0).abs() < 1e-9,
+            "cost_price must not change on draft, got {}",
+            cost
+        );
     }
 
     // --- Close purchase tests (tasks 4.2, 4.3) ---
@@ -1034,24 +1152,48 @@ mod tests {
         conn.execute_batch("COMMIT").unwrap();
 
         let status: String = conn
-            .query_row(r#"SELECT status FROM "Purchases" WHERE id = ?"#, params![purchase_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT status FROM "Purchases" WHERE id = ?"#,
+                params![purchase_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(status, "closed");
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((cost - 3.0).abs() < 1e-9, "expected cost 3.0, got {}", cost);
 
         let qty: f64 = conn
-            .query_row(r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap_or(0.0);
-        assert!((qty - 10.0).abs() < 1e-9, "expected stock 10.0, got {}", qty);
+        assert!(
+            (qty - 10.0).abs() < 1e-9,
+            "expected stock 10.0, got {}",
+            qty
+        );
 
         let fp: f64 = conn
-            .query_row(r#"SELECT CAST(final_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(final_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert!((fp - 6.0).abs() < 1e-9, "expected final_price 6.0, got {}", fp);
+        assert!(
+            (fp - 6.0).abs() < 1e-9,
+            "expected final_price 6.0, got {}",
+            fp
+        );
     }
 
     #[test]
@@ -1078,7 +1220,11 @@ mod tests {
         conn.execute_batch("COMMIT").unwrap();
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((cost - 14.0).abs() < 1e-9, "expected 14.0, got {}", cost);
     }
@@ -1110,15 +1256,32 @@ mod tests {
         conn.execute_batch("COMMIT").unwrap();
 
         let qty: f64 = conn
-            .query_row(r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap_or(0.0);
-        assert!((qty - 1000.0).abs() < 1e-9, "expected stock 1000, got {}", qty);
+        assert!(
+            (qty - 1000.0).abs() < 1e-9,
+            "expected stock 1000, got {}",
+            qty
+        );
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
         let expected = 20.0 / 1000.0;
-        assert!((cost - expected).abs() < 1e-9, "expected cost {}, got {}", expected, cost);
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "expected cost {}, got {}",
+            expected,
+            cost
+        );
     }
 
     #[test]
@@ -1144,7 +1307,11 @@ mod tests {
         conn.execute_batch("COMMIT").unwrap();
 
         let qty: f64 = conn
-            .query_row(r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT COALESCE(current_quantity, 0.0) FROM "Stock" WHERE product_id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap_or(0.0);
         assert!((qty - 3.0).abs() < 1e-9, "expected stock 3.0, got {}", qty);
     }
@@ -1175,7 +1342,11 @@ mod tests {
 
         // Second close: status is already 'closed', should fail before BEGIN
         let status: String = conn
-            .query_row(r#"SELECT status FROM "Purchases" WHERE id = ?"#, params![purchase_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT status FROM "Purchases" WHERE id = ?"#,
+                params![purchase_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(status, "closed", "purchase should be closed");
 
@@ -1210,12 +1381,18 @@ mod tests {
         conn.execute_batch("ROLLBACK").unwrap();
 
         let status: String = conn
-            .query_row(r#"SELECT status FROM "Purchases" WHERE id = ?"#, params![purchase_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT status FROM "Purchases" WHERE id = ?"#,
+                params![purchase_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(status, "open", "status must remain 'open' after rollback");
 
         let movements: i64 = conn
-            .query_row(r#"SELECT COUNT(*) FROM "Stock_Movements""#, [], |r| r.get(0))
+            .query_row(r#"SELECT COUNT(*) FROM "Stock_Movements""#, [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(movements, 0, "no movements after rollback");
     }
@@ -1237,7 +1414,11 @@ mod tests {
         run_purchase(&conn, 0.0, items);
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((cost - 3.0).abs() < 1e-9, "expected 3.0, got {}", cost);
     }
@@ -1247,27 +1428,44 @@ mod tests {
         let conn = test_db();
         let product_id = insert_product(&conn, "Bobina Extra", false);
 
-        run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 10.0,
-            unit_cost: 3.0,
-            final_price: 0.0,
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            0.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 10.0,
+                unit_cost: 3.0,
+                final_price: 0.0,
+                ..Default::default()
+            }],
+        );
 
-        run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 5.0,
-            unit_cost: 5.0,
-            final_price: 0.0,
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            0.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 5.0,
+                unit_cost: 5.0,
+                final_price: 0.0,
+                ..Default::default()
+            }],
+        );
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
         let expected = (10.0 * 3.0 + 5.0 * 5.0) / 15.0;
-        assert!((cost - expected).abs() < 1e-9, "expected {}, got {}", expected, cost);
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "expected {}, got {}",
+            expected,
+            cost
+        );
     }
 
     #[test]
@@ -1275,16 +1473,24 @@ mod tests {
         let conn = test_db();
         let product_id = insert_product(&conn, "Papel Foto", false);
 
-        run_purchase(&conn, 100.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 10.0,
-            unit_cost: 4.0,
-            final_price: 0.0,
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            100.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 10.0,
+                unit_cost: 4.0,
+                final_price: 0.0,
+                ..Default::default()
+            }],
+        );
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((cost - 14.0).abs() < 1e-9, "expected 14.0, got {}", cost);
     }
@@ -1295,20 +1501,33 @@ mod tests {
         let conn = test_db();
         let product_id = insert_product(&conn, "Folha A4", false);
 
-        run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 2.0,
-            unit_cost: 10.0,
-            final_price: 0.0,
-            unit_qty: Some(500.0),
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            0.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 2.0,
+                unit_cost: 10.0,
+                final_price: 0.0,
+                unit_qty: Some(500.0),
+                ..Default::default()
+            }],
+        );
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
         let expected = (2.0 * 10.0) / 1000.0;
-        assert!((cost - expected).abs() < 1e-9, "expected {}, got {}", expected, cost);
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "expected {}, got {}",
+            expected,
+            cost
+        );
     }
 
     #[test]
@@ -1316,13 +1535,17 @@ mod tests {
         let conn = test_db();
         let product_id = insert_product(&conn, "Papel Foto", false);
 
-        run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 10.0,
-            unit_cost: 5.0,
-            final_price: 0.0,
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            0.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 10.0,
+                unit_cost: 5.0,
+                final_price: 0.0,
+                ..Default::default()
+            }],
+        );
 
         let stored_loss: f64 = conn
             .query_row(
@@ -1348,15 +1571,19 @@ mod tests {
         let conn = test_db();
         let product_id = insert_product(&conn, "Bobina", false);
 
-        run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 5.0,
-            unit_cost: 20.0,
-            final_price: 0.0,
-            loss_rate: Some(0.15),
-            loss_mode: Some("manual".to_string()),
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            0.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 5.0,
+                unit_cost: 20.0,
+                final_price: 0.0,
+                loss_rate: Some(0.15),
+                loss_mode: Some("manual".to_string()),
+                ..Default::default()
+            }],
+        );
 
         let stored_loss: f64 = conn
             .query_row(
@@ -1392,14 +1619,18 @@ mod tests {
             params![product_id],
         ).unwrap();
 
-        run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 10.0,
-            unit_cost: 3.0,
-            final_price: 0.0,
-            loss_mode: Some("auto".to_string()),
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            0.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 10.0,
+                unit_cost: 3.0,
+                final_price: 0.0,
+                loss_mode: Some("auto".to_string()),
+                ..Default::default()
+            }],
+        );
 
         let (loss, mode): (f64, String) = conn
             .query_row(
@@ -1408,7 +1639,11 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert!((loss - 0.2).abs() < 1e-9, "expected frozen 0.2, got {}", loss);
+        assert!(
+            (loss - 0.2).abs() < 1e-9,
+            "expected frozen 0.2, got {}",
+            loss
+        );
         assert_eq!(mode, "auto");
     }
 
@@ -1417,15 +1652,19 @@ mod tests {
         let conn = test_db();
         let product_id = insert_product(&conn, "Papel", false);
 
-        run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 4.0,
-            unit_cost: 8.0,
-            final_price: 0.0,
-            loss_rate: Some(0.25),
-            loss_mode: Some("manual".to_string()),
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            0.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 4.0,
+                unit_cost: 8.0,
+                final_price: 0.0,
+                loss_rate: Some(0.25),
+                loss_mode: Some("manual".to_string()),
+                ..Default::default()
+            }],
+        );
 
         let (loss, mode): (f64, String) = conn
             .query_row(
@@ -1462,13 +1701,17 @@ mod tests {
         let conn = test_db();
         let id = insert_product(&conn, "Papel A4", false);
 
-        run_purchase(&conn, 10.0, vec![PurchaseItemInput {
-            product_id: Some(id),
-            quantity: 5.0,
-            unit_cost: 20.0,
-            final_price: 0.0,
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            10.0,
+            vec![PurchaseItemInput {
+                product_id: Some(id),
+                quantity: 5.0,
+                unit_cost: 20.0,
+                final_price: 0.0,
+                ..Default::default()
+            }],
+        );
 
         let qty: f64 = conn
             .query_row(
@@ -1497,7 +1740,8 @@ mod tests {
                (product_id, quantity, movement_type, motive, created_at)
                VALUES (?, ?, 'out', 'perda', CURRENT_TIMESTAMP)"#,
             params![id, 5.0_f64],
-        ).unwrap();
+        )
+        .unwrap();
         let count: i64 = conn
             .query_row(
                 r#"SELECT COUNT(*) FROM "Stock_Movements"
@@ -1520,7 +1764,8 @@ mod tests {
                (product_id, quantity, movement_type, motive, created_at)
                VALUES (?, ?, ?, 'ajuste', CURRENT_TIMESTAMP)"#,
             params![id, quantity.abs(), movement_type],
-        ).unwrap();
+        )
+        .unwrap();
         let mt: String = conn
             .query_row(
                 r#"SELECT movement_type FROM "Stock_Movements" WHERE product_id = ?"#,
@@ -1619,13 +1864,15 @@ mod tests {
         ).unwrap();
 
         let mut stmt = conn
-            .prepare(r#"
+            .prepare(
+                r#"
                 SELECT id, quantity, movement_type, motive,
                        CAST(created_at AS VARCHAR), sale_id
                 FROM "Stock_Movements"
                 WHERE product_id = ?
                 ORDER BY created_at DESC
-            "#)
+            "#,
+            )
             .unwrap();
         let movements: Vec<StockMovement> = stmt
             .query_map(params![id], |row| {
@@ -1727,7 +1974,10 @@ mod tests {
             )
             .unwrap();
         let rows = conn
-            .execute(r#"DELETE FROM "Product_Components" WHERE id = ?"#, params![comp_id])
+            .execute(
+                r#"DELETE FROM "Product_Components" WHERE id = ?"#,
+                params![comp_id],
+            )
             .unwrap();
         assert_eq!(rows, 1);
     }
@@ -1736,7 +1986,10 @@ mod tests {
     fn remove_product_component_nonexistent_returns_zero_rows() {
         let conn = test_db();
         let rows = conn
-            .execute(r#"DELETE FROM "Product_Components" WHERE id = ?"#, params![99999_i64])
+            .execute(
+                r#"DELETE FROM "Product_Components" WHERE id = ?"#,
+                params![99999_i64],
+            )
             .unwrap();
         assert_eq!(rows, 0);
     }
@@ -1775,16 +2028,40 @@ mod tests {
         let id_a = insert_product(&conn, "Insumo A", false);
         let id_b = insert_product(&conn, "Insumo B", false);
 
-        run_purchase(&conn, 20.0, vec![
-            PurchaseItemInput { product_id: Some(id_a), quantity: 5.0, unit_cost: 2.0, final_price: 0.0, ..Default::default() },
-            PurchaseItemInput { product_id: Some(id_b), quantity: 10.0, unit_cost: 3.0, final_price: 0.0, ..Default::default() },
-        ]);
+        run_purchase(
+            &conn,
+            20.0,
+            vec![
+                PurchaseItemInput {
+                    product_id: Some(id_a),
+                    quantity: 5.0,
+                    unit_cost: 2.0,
+                    final_price: 0.0,
+                    ..Default::default()
+                },
+                PurchaseItemInput {
+                    product_id: Some(id_b),
+                    quantity: 10.0,
+                    unit_cost: 3.0,
+                    final_price: 0.0,
+                    ..Default::default()
+                },
+            ],
+        );
 
         let cost_a: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![id_a], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![id_a],
+                |r| r.get(0),
+            )
             .unwrap();
         let cost_b: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![id_b], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![id_b],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((cost_a - 3.0).abs() < 1e-9, "expected 3.0, got {}", cost_a);
         assert!((cost_b - 4.5).abs() < 1e-9, "expected 4.5, got {}", cost_b);
@@ -1795,14 +2072,22 @@ mod tests {
         let conn = test_db();
         let product_id = insert_product(&conn, "Brinde", false);
 
-        run_purchase(&conn, 50.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 5.0,
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            50.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 5.0,
+                ..Default::default()
+            }],
+        );
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((cost - 0.0).abs() < 1e-9, "expected 0.0, got {}", cost);
     }
@@ -1812,13 +2097,17 @@ mod tests {
         let conn = test_db();
         let product_id = insert_product(&conn, "Produto X", false);
 
-        run_purchase(&conn, 0.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 10.0,
-            unit_cost: 4.0,
-            final_price: 6.0,
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            0.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 10.0,
+                unit_cost: 4.0,
+                final_price: 6.0,
+                ..Default::default()
+            }],
+        );
 
         let (fp, markup, margin): (f64, f64, f64) = conn
             .query_row(
@@ -1828,10 +2117,23 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert!((fp - 6.0).abs() < 1e-9, "final_price: expected 6.0, got {}", fp);
-        assert!((markup - 1.5).abs() < 1e-9, "markup: expected 1.5, got {}", markup);
+        assert!(
+            (fp - 6.0).abs() < 1e-9,
+            "final_price: expected 6.0, got {}",
+            fp
+        );
+        assert!(
+            (markup - 1.5).abs() < 1e-9,
+            "markup: expected 1.5, got {}",
+            markup
+        );
         let expected_margin = 1.0 - 4.0_f64 / 6.0_f64;
-        assert!((margin - expected_margin).abs() < 1e-9, "profit_margin: expected {}, got {}", expected_margin, margin);
+        assert!(
+            (margin - expected_margin).abs() < 1e-9,
+            "profit_margin: expected {}, got {}",
+            expected_margin,
+            margin
+        );
     }
 
     #[test]
@@ -1841,16 +2143,24 @@ mod tests {
         let conn = test_db();
         let product_id = insert_product(&conn, "Papel Unidade", false);
 
-        run_purchase(&conn, 10.0, vec![PurchaseItemInput {
-            product_id: Some(product_id),
-            quantity: 2.0,
-            unit_cost: 5.0,
-            unit_qty: Some(10.0),
-            ..Default::default()
-        }]);
+        run_purchase(
+            &conn,
+            10.0,
+            vec![PurchaseItemInput {
+                product_id: Some(product_id),
+                quantity: 2.0,
+                unit_cost: 5.0,
+                unit_qty: Some(10.0),
+                ..Default::default()
+            }],
+        );
 
         let cost: f64 = conn
-            .query_row(r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#, params![product_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT CAST(cost_price AS DOUBLE) FROM "Products" WHERE id = ?"#,
+                params![product_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!((cost - 1.0).abs() < 1e-9, "expected 1.0, got {}", cost);
     }
@@ -1882,12 +2192,20 @@ mod tests {
         conn.execute_batch("COMMIT").unwrap();
 
         let open_count: i64 = conn
-            .query_row(r#"SELECT COUNT(*) FROM "Purchases" WHERE status = 'open'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Purchases" WHERE status = 'open'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(open_count, 1, "should have 1 open purchase");
 
         let closed_count: i64 = conn
-            .query_row(r#"SELECT COUNT(*) FROM "Purchases" WHERE status = 'closed'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Purchases" WHERE status = 'closed'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(closed_count, 1, "should have 1 closed purchase");
     }
@@ -1916,8 +2234,8 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0, "no product must be created during draft");
 
-        let (name, unit, desc, sellable, pid): (String, String, Option<String>, bool, Option<i64>) = conn
-            .query_row(
+        let (name, unit, desc, sellable, pid): (String, String, Option<String>, bool, Option<i64>) =
+            conn.query_row(
                 r#"SELECT new_product_name, new_product_unit, new_product_description,
                           new_product_sellable, product_id
                    FROM "Purchase_Items""#,
@@ -1973,7 +2291,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "Produto Fechamento");
-        assert!((cost - 3.0).abs() < 1e-9, "cost_price expected 3.0, got {}", cost);
+        assert!(
+            (cost - 3.0).abs() < 1e-9,
+            "cost_price expected 3.0, got {}",
+            cost
+        );
 
         let stock_qty: f64 = conn
             .query_row(
@@ -1983,7 +2305,11 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!((stock_qty - 10.0).abs() < 1e-9, "stock qty expected 10.0, got {}", stock_qty);
+        assert!(
+            (stock_qty - 10.0).abs() < 1e-9,
+            "stock qty expected 10.0, got {}",
+            stock_qty
+        );
     }
 
     #[test]
@@ -1998,7 +2324,10 @@ mod tests {
         conn.execute_batch("BEGIN").unwrap();
         let result = create_purchase_draft(&conn, 0.0, &[item]);
         conn.execute_batch("ROLLBACK").unwrap();
-        assert!(result.is_err(), "must reject item with no product reference");
+        assert!(
+            result.is_err(),
+            "must reject item with no product reference"
+        );
     }
 
     #[test]
@@ -2108,6 +2437,9 @@ mod tests {
         conn.execute_batch("COMMIT").unwrap();
 
         let rows = list_product_purchases_raw(&conn, product_id).unwrap();
-        assert!(rows.is_empty(), "rascunhos abertos nao devem aparecer no historico de compras");
+        assert!(
+            rows.is_empty(),
+            "rascunhos abertos nao devem aparecer no historico de compras"
+        );
     }
 }

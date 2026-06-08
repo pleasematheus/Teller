@@ -46,7 +46,11 @@ pub fn validate_loss_mode(loss_mode: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn validate_unit(conn: &Connection, unit: &str, require_active: bool) -> Result<(), String> {
+pub(crate) fn validate_unit(
+    conn: &Connection,
+    unit: &str,
+    require_active: bool,
+) -> Result<(), String> {
     let count: i64 = if require_active {
         conn.query_row(
             r#"SELECT COUNT(*) FROM "Units_Of_Measure" WHERE name = ? AND active = true"#,
@@ -196,20 +200,27 @@ pub fn get_product_loss_rate(product_id: i64, state: State<DbState>) -> Result<f
 /// Derives CMV from Product_Components for a product with a bill of materials.
 /// Returns Ok(None) if the product has no components (caller uses own cost_price).
 /// Returns Err if any component has expected_loss_rate >= 1 (CMV undefined).
-pub fn compute_cmv_from_components(conn: &Connection, product_id: i64) -> Result<Option<f64>, String> {
+pub fn compute_cmv_from_components(
+    conn: &Connection,
+    product_id: i64,
+) -> Result<Option<f64>, String> {
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT pc.quantity,
                    CAST(p.cost_price AS DOUBLE),
                    CAST(p.expected_loss_rate AS DOUBLE)
             FROM "Product_Components" pc
             JOIN "Products" p ON p.id = pc.child_id
             WHERE pc.parent_id = ?
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let components: Vec<(i64, f64, f64)> = stmt
-        .query_map(params![product_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .query_map(params![product_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
@@ -260,14 +271,16 @@ pub fn list_products(state: State<DbState>) -> Result<Vec<Product>, String> {
     // CAST decimals to DOUBLE: duckdb-rs 1.4.4 reads DECIMAL(5,4) directly as f64 incorrectly
     // (returns 0). Casting in SQL works for both legacy DECIMAL and new DOUBLE columns.
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT id, name, description, active, sellable,
                    CAST(cost_price AS DOUBLE), CAST(markup AS DOUBLE),
                    CAST(final_price AS DOUBLE), CAST(expected_loss_rate AS DOUBLE),
                    unit, CAST(profit_margin AS DOUBLE), COALESCE(loss_mode, 'manual')
             FROM "Products"
             ORDER BY name
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let products = stmt
@@ -378,8 +391,17 @@ pub fn update_product(
                    markup = ?, final_price = ?,
                    unit = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
-            params![name, description, active, sellable, markup, final_price,
-                    unit, profit_margin, id],
+            params![
+                name,
+                description,
+                active,
+                sellable,
+                markup,
+                final_price,
+                unit,
+                profit_margin,
+                id
+            ],
         )
         .map_err(|e| e.to_string())?;
 
@@ -494,7 +516,8 @@ mod tests {
             r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
                VALUES ('kg', 'kg', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(validate_unit(&conn, "kg", true).is_err());
     }
 
@@ -505,7 +528,8 @@ mod tests {
             r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
                VALUES ('kg', 'kg', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(validate_unit(&conn, "kg", false).is_ok());
     }
 
@@ -585,8 +609,17 @@ mod tests {
                    markup = ?, final_price = ?,
                    unit = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
-            params!["Insumo CP Novo", Option::<String>::None, true, false,
-                    1.5_f64, 8.25_f64, "unidade", 0.3_f64, id],
+            params![
+                "Insumo CP Novo",
+                Option::<String>::None,
+                true,
+                false,
+                1.5_f64,
+                8.25_f64,
+                "unidade",
+                0.3_f64,
+                id
+            ],
         )
         .unwrap();
         let cost: f64 = conn
@@ -596,7 +629,11 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!((cost - 5.50).abs() < 1e-9, "update_product must not modify cost_price, got {}", cost);
+        assert!(
+            (cost - 5.50).abs() < 1e-9,
+            "update_product must not modify cost_price, got {}",
+            cost
+        );
     }
 
     #[test]
@@ -604,7 +641,11 @@ mod tests {
         let conn = test_db();
         insert_product(&conn, "Bolo de Cenoura", true);
         let count: i64 = conn
-            .query_row(r#"SELECT COUNT(*) FROM "Products" WHERE name = 'Bolo de Cenoura'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Products" WHERE name = 'Bolo de Cenoura'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1);
     }
@@ -734,8 +775,16 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert!((margin - 0.3456).abs() < 1e-9, "profit_margin got {}", margin);
-        assert!((loss - 0.0732).abs() < 1e-9, "expected_loss_rate got {}", loss);
+        assert!(
+            (margin - 0.3456).abs() < 1e-9,
+            "profit_margin got {}",
+            margin
+        );
+        assert!(
+            (loss - 0.0732).abs() < 1e-9,
+            "expected_loss_rate got {}",
+            loss
+        );
         assert!((markup - 1.25).abs() < 1e-9, "markup got {}", markup);
     }
 
@@ -776,8 +825,18 @@ mod tests {
                    cost_price = ?, markup = ?, final_price = ?,
                    unit = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
-            params!["Insumo Novo", Option::<String>::None, true, false,
-                    12.0, 1.5, 18.0, "unidade", 0.3, id],
+            params![
+                "Insumo Novo",
+                Option::<String>::None,
+                true,
+                false,
+                12.0,
+                1.5,
+                18.0,
+                "unidade",
+                0.3,
+                id
+            ],
         )
         .unwrap();
         let (loss, mode): (f64, String) = conn
@@ -838,13 +897,17 @@ mod tests {
             r#"INSERT INTO "Users" (name, nickname, password_hash, active, updated_at, created_at)
                VALUES ('u', 'u', 'h', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
-        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        )
+        .unwrap();
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0))
+            .unwrap();
         conn.execute(
             r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
                VALUES (?, 'closed', 1000.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             params![user_id],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             r#"INSERT INTO "Financial_Entries"
                (type, name, category, amount, is_fixed, updated_at, created_at)
@@ -866,14 +929,18 @@ mod tests {
             .query_row(
                 r#"SELECT COALESCE(SUM(amount), 0.0) FROM "Financial_Entries"
                    WHERE "type" = 'expense' AND is_fixed = true"#,
-                [], |r| r.get(0),
-            ).unwrap();
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         let fat: f64 = conn
             .query_row(
                 r#"SELECT COALESCE(SUM(total_value), 0.0) FROM "Sales"
                    WHERE created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
-                [], |r| r.get(0),
-            ).unwrap();
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         // No card fees configured, so card_cv = 0
         assert!((cv / fat - 0.1).abs() < 1e-9);
         assert!((df / fat - 0.2).abs() < 1e-9);
@@ -890,8 +957,11 @@ mod tests {
             r#"INSERT INTO "Users" (name, nickname, password_hash, active, updated_at, created_at)
                VALUES ('u', 'u', 'h', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
-        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        )
+        .unwrap();
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0))
+            .unwrap();
 
         let pm_id = insert_payment_method(&conn, "Cartão");
         // Card method with a fee
@@ -901,12 +971,15 @@ mod tests {
             params![pm_id],
         ).unwrap();
 
-        let sale_id: i64 = conn.query_row(
-            r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
+        let sale_id: i64 = conn
+            .query_row(
+                r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
                VALUES (?, 'closed', 500.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                RETURNING id"#,
-            params![user_id], |r| r.get(0),
-        ).unwrap();
+                params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap();
 
         // amount_paid = 100, net_amount = 98 (2% fee retained)
         conn.execute(
@@ -915,24 +988,34 @@ mod tests {
             params![sale_id, pm_id],
         ).unwrap();
 
-        let card_fee_sum: f64 = conn.query_row(
-            r#"SELECT COALESCE(SUM(amount_paid - net_amount), 0.0)
+        let card_fee_sum: f64 = conn
+            .query_row(
+                r#"SELECT COALESCE(SUM(amount_paid - net_amount), 0.0)
                FROM "Sale_Payments"
                WHERE payment_method_id IN (
                    SELECT DISTINCT payment_method_id FROM "Transaction_Fees" WHERE fee_percent > 0
                )
                AND created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
-            [], |r| r.get(0),
-        ).unwrap();
-        let fat: f64 = conn.query_row(
-            r#"SELECT COALESCE(SUM(total_value), 0.0) FROM "Sales"
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let fat: f64 = conn
+            .query_row(
+                r#"SELECT COALESCE(SUM(total_value), 0.0) FROM "Sales"
                WHERE created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
-            [], |r| r.get(0),
-        ).unwrap();
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
 
         // card_cv = 2.0 / 500.0 = 0.004
         let card_cv = card_fee_sum / fat;
-        assert!((card_cv - 0.004).abs() < 1e-9, "card_cv should be 0.004, got {}", card_cv);
+        assert!(
+            (card_cv - 0.004).abs() < 1e-9,
+            "card_cv should be 0.004, got {}",
+            card_cv
+        );
     }
 
     #[test]
@@ -944,8 +1027,11 @@ mod tests {
             r#"INSERT INTO "Users" (name, nickname, password_hash, active, updated_at, created_at)
                VALUES ('u', 'u', 'h', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
-        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        )
+        .unwrap();
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0))
+            .unwrap();
 
         let pm_id = insert_payment_method(&conn, "Cartão");
         conn.execute(
@@ -956,12 +1042,15 @@ mod tests {
 
         // Sales exist (faturamento > 0) but no card payments
         let pix_pm_id = insert_payment_method(&conn, "Pix");
-        let sale_id: i64 = conn.query_row(
-            r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
+        let sale_id: i64 = conn
+            .query_row(
+                r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
                VALUES (?, 'closed', 400.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                RETURNING id"#,
-            params![user_id], |r| r.get(0),
-        ).unwrap();
+                params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         conn.execute(
             r#"INSERT INTO "Sale_Payments" (sale_id, payment_method_id, amount_paid, net_amount, created_at)
                VALUES (?, ?, 400.0, 400.0, CURRENT_TIMESTAMP)"#,
@@ -969,22 +1058,28 @@ mod tests {
         ).unwrap();
 
         // No card payments → fallback = MAX(fee_percent) = 0.025
-        let card_fee_sum: f64 = conn.query_row(
-            r#"SELECT COALESCE(SUM(amount_paid - net_amount), 0.0)
+        let card_fee_sum: f64 = conn
+            .query_row(
+                r#"SELECT COALESCE(SUM(amount_paid - net_amount), 0.0)
                FROM "Sale_Payments"
                WHERE payment_method_id IN (
                    SELECT DISTINCT payment_method_id FROM "Transaction_Fees" WHERE fee_percent > 0
                )
                AND created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
-            [], |r| r.get(0),
-        ).unwrap();
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(card_fee_sum, 0.0, "no card payments, sum should be 0");
 
         let max_fee: f64 = conn.query_row(
             r#"SELECT COALESCE(MAX(fee_percent), 0.0) FROM "Transaction_Fees" WHERE fee_percent > 0"#,
             [], |r| r.get(0),
         ).unwrap();
-        assert!((max_fee - 0.025).abs() < 1e-9, "fallback should be max fee 0.025");
+        assert!(
+            (max_fee - 0.025).abs() < 1e-9,
+            "fallback should be max fee 0.025"
+        );
     }
 
     #[test]
@@ -995,37 +1090,49 @@ mod tests {
             r#"INSERT INTO "Users" (name, nickname, password_hash, active, updated_at, created_at)
                VALUES ('u', 'u', 'h', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
-        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        )
+        .unwrap();
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0))
+            .unwrap();
 
         // No Transaction_Fees at all (Pix/dinheiro methods)
-        let pm_id: i64 = conn.query_row(
-            r#"INSERT INTO "Payment_Methods" (name, active, updated_at, created_at)
+        let pm_id: i64 = conn
+            .query_row(
+                r#"INSERT INTO "Payment_Methods" (name, active, updated_at, created_at)
                VALUES ('Dinheiro', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                RETURNING id"#,
-            [], |r| r.get(0),
-        ).unwrap();
-        let sale_id: i64 = conn.query_row(
-            r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let sale_id: i64 = conn
+            .query_row(
+                r#"INSERT INTO "Sales" (user_id, status, total_value, updated_at, created_at)
                VALUES (?, 'closed', 200.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                RETURNING id"#,
-            params![user_id], |r| r.get(0),
-        ).unwrap();
+                params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         conn.execute(
             r#"INSERT INTO "Sale_Payments" (sale_id, payment_method_id, amount_paid, net_amount, created_at)
                VALUES (?, ?, 200.0, 200.0, CURRENT_TIMESTAMP)"#,
             params![sale_id, pm_id],
         ).unwrap();
 
-        let card_fee_sum: f64 = conn.query_row(
-            r#"SELECT COALESCE(SUM(amount_paid - net_amount), 0.0)
+        let card_fee_sum: f64 = conn
+            .query_row(
+                r#"SELECT COALESCE(SUM(amount_paid - net_amount), 0.0)
                FROM "Sale_Payments"
                WHERE payment_method_id IN (
                    SELECT DISTINCT payment_method_id FROM "Transaction_Fees" WHERE fee_percent > 0
                )
                AND created_at >= now()::TIMESTAMP - INTERVAL '1 year'"#,
-            [], |r| r.get(0),
-        ).unwrap();
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         let max_fee: f64 = conn.query_row(
             r#"SELECT COALESCE(MAX(fee_percent), 0.0) FROM "Transaction_Fees" WHERE fee_percent > 0"#,
             [], |r| r.get(0),
@@ -1089,7 +1196,12 @@ mod tests {
         ).unwrap();
         let rate = get_product_loss_rate_raw(&conn, id);
         let expected = 5.0 / 15.0;
-        assert!((rate - expected).abs() < 1e-9, "expected {}, got {}", expected, rate);
+        assert!(
+            (rate - expected).abs() < 1e-9,
+            "expected {}, got {}",
+            expected,
+            rate
+        );
     }
 
     #[test]
@@ -1148,7 +1260,8 @@ mod tests {
             r#"UPDATE "Products" SET cost_price = 10.0, expected_loss_rate = 0.2,
                updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
             params![child],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             r#"INSERT INTO "Product_Components" (parent_id, child_id, quantity, updated_at, created_at)
                VALUES (?, ?, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
@@ -1167,14 +1280,18 @@ mod tests {
             r#"UPDATE "Products" SET expected_loss_rate = 1.0,
                updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
             params![child],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             r#"INSERT INTO "Product_Components" (parent_id, child_id, quantity, updated_at, created_at)
                VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             params![parent, child],
         ).unwrap();
         let result = compute_cmv_from_components(&conn, parent);
-        assert!(result.is_err(), "should error when component loss_rate >= 1");
+        assert!(
+            result.is_err(),
+            "should error when component loss_rate >= 1"
+        );
     }
 
     #[test]
@@ -1207,8 +1324,11 @@ mod tests {
             r#"INSERT INTO "Users" (name, nickname, password_hash, active, updated_at, created_at)
                VALUES ('u', 'u', 'h', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
-        let user_id: i64 = conn.query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0)).unwrap();
+        )
+        .unwrap();
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0))
+            .unwrap();
         let product_id: i64 = conn
             .query_row(
                 r#"INSERT INTO "Products"
@@ -1234,7 +1354,8 @@ mod tests {
                (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
                VALUES (?, ?, 1, 20.0, 0.0, 20.0, CURRENT_TIMESTAMP)"#,
             params![sale_id, product_id],
-        ).unwrap();
+        )
+        .unwrap();
         let margin: f64 = conn
             .query_row(
                 r#"SELECT COALESCE(
