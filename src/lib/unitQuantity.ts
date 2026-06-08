@@ -7,6 +7,13 @@ export function isUnitInteger(units: UnitOfMeasure[], unitName: string): boolean
   return unit ? unit.integer : true;
 }
 
+export function normalizeQuantity(value: number, integer: boolean): number {
+  if (integer) {
+    return Math.max(1, Math.round(value))
+  }
+  return Math.max(0.001, value)
+}
+
 export type QuantityValidation = { ok: boolean; error?: string };
 
 // Valida uma quantidade contra o flag inteiro da unidade.

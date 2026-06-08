@@ -7,7 +7,7 @@ import { ProductCommand } from "@/components/ui/ProductCommand"
 import type { Product } from "@/types/product"
 import type { Sale, SaleItem, SaleItemInput } from "@/types/sale"
 import type { UnitOfMeasure } from "@/types/units"
-import { isUnitInteger, validateQuantity } from "@/lib/unitQuantity"
+import { isUnitInteger, validateQuantity, normalizeQuantity } from "@/lib/unitQuantity"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -118,7 +118,7 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
       prev.map((item, i) => {
         if (i !== idx) return item
         const integer = productInteger(item.product_id)
-        const quantity = integer ? Math.max(1, Math.round(value)) : Math.max(0.001, value)
+        const quantity = normalizeQuantity(value, integer)
         return { ...item, quantity }
       }),
     )

@@ -318,7 +318,12 @@ O sistema SHALL recalcular o `Products.cost_price` de cada insumo comprado como 
 
 ### Requirement: Quantidade de item de compra respeita o flag inteiro da unidade
 
-O campo de quantidade de cada linha de item de compra SHALL respeitar o flag `integer` da unidade do produto da linha. Quando a unidade do produto tem `integer = true`, o formulário SHALL usar passo inteiro (`step="1"`) e SHALL bloquear o envio de uma `quantity` com casas decimais, exibindo erro de validação. Quando a unidade tem `integer = false`, casas decimais SHALL ser permitidas. Quando a unidade do produto não for encontrada na lista de unidades, o sistema SHALL tratá-la como inteira (bloqueia decimais), coerente com o default.
+O campo de quantidade de cada linha de item de compra SHALL respeitar o flag `integer` da unidade do produto da linha. Quando a unidade do produto tem `integer = true`, o formulário SHALL usar passo inteiro (`step="1"`), SHALL normalizar a quantidade para o inteiro mais próximo (mínimo 1) quando o campo perde o foco, e SHALL bloquear o envio de uma `quantity` com casas decimais como defesa secundária. O campo "Unidades por caixa" (`unit_qty`) também SHALL usar passo inteiro e bloquear decimais quando a unidade do produto for inteira; quando a conversão estiver ativa e a unidade do produto for inteira, a quantidade de estoque resultante (`quantity * unit_qty`) SHALL também ser inteira, caso contrário o submit SHALL ser bloqueado. Quando a unidade tem `integer = false`, casas decimais SHALL ser permitidas tanto em `quantity` quanto em `unit_qty`. Quando a unidade do produto não for encontrada na lista de unidades, o sistema SHALL tratá-la como inteira (bloqueia decimais), coerente com o default.
+
+#### Scenario: Digitação fracionada em unidade inteira é normalizada
+- **WHEN** o operador digita uma quantidade com casas decimais em um item cuja unidade é inteira e o campo perde o foco
+- **THEN** o valor é normalizado para o inteiro mais próximo, com mínimo de 1
+- **THEN** enquanto o valor permanecer fracionado, o campo exibe o aviso "Apenas inteiros"
 
 #### Scenario: Unidade inteira bloqueia decimal
 - **WHEN** o produto da linha usa uma unidade com `integer = true` e o operador informa `quantity = 2,5`
@@ -335,3 +340,7 @@ O campo de quantidade de cada linha de item de compra SHALL respeitar o flag `in
 #### Scenario: Unidade ausente assume inteiro
 - **WHEN** a unidade do produto da linha não consta na lista de unidades carregada
 - **THEN** o campo de quantidade usa passo inteiro e bloqueia o envio de quantidade decimal
+
+#### Scenario: Conversão caixa para unidade gera estoque fracionado em unidade inteira
+- **WHEN** um item tem unidade de produto inteira, a conversão `unit_qty` ativa, e `quantity * unit_qty` resulta em valor fracionado
+- **THEN** o sistema bloqueia o submit e sinaliza que a quantidade de estoque resultante deve ser inteira
