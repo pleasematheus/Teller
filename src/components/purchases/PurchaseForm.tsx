@@ -10,7 +10,7 @@ import type { UnitOfMeasure } from "@/types/units"
 import { computePrice } from "@/lib/pricing"
 import { computeUnitQtyFactor, computeStockQty } from "@/lib/purchaseConversion"
 import { buildPurchaseItemPayload } from "@/lib/buildPurchaseItemPayload"
-import { isUnitInteger, validateQuantity } from "@/lib/unitQuantity"
+import { isUnitInteger, validateQuantity, normalizeQuantity } from "@/lib/unitQuantity"
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -222,6 +222,16 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
       return setError("Há itens com unidade inteira e quantidade fracionada. Use números inteiros.")
     }
 
+    const conversionError = items.some((i) => {
+      if (!i.showConversion) return false
+      const unitName = i.isNewProduct ? i.newProductUnit : i.productUnit
+      if (!isUnitInteger(units, unitName)) return false
+      return !validateQuantity(stockQty(i), true).ok
+    })
+    if (conversionError) {
+      return setError("A conversao caixa → unidade gerou quantidade de estoque fracionada para uma unidade inteira. Corrija o campo 'Unidades por caixa'.")
+    }
+
     setSaving(true)
     try {
       if (purchaseId) {
@@ -343,6 +353,15 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
                       step={itemInteger ? "1" : "any"}
                       value={item.quantity}
                       onChange={(e) => update(item.id, { quantity: e.target.value, finalPriceDirty: false })}
+                      onKeyDown={(e) => {
+                        if (itemInteger && (e.key === "." || e.key === ",")) e.preventDefault()
+                      }}
+                      onBlur={(e) => {
+                        const val = parseFloat(e.target.value)
+                        if (!isNaN(val)) {
+                          update(item.id, { quantity: String(normalizeQuantity(val, itemInteger)), finalPriceDirty: false })
+                        }
+                      }}
                       placeholder="0"
                       className="w-24"
                       aria-invalid={qtyInvalid}
@@ -414,10 +433,19 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
                       <label className="text-xs text-teller-muted">Unidades por caixa</label>
                       <Input
                         type="number"
-                        min={0.0001}
-                        step="any"
+                        min={itemInteger ? 1 : 0.0001}
+                        step={itemInteger ? "1" : "any"}
                         value={item.unitQty}
                         onChange={(e) => update(item.id, { unitQty: e.target.value, finalPriceDirty: false })}
+                        onKeyDown={(e) => {
+                          if (itemInteger && (e.key === "." || e.key === ",")) e.preventDefault()
+                        }}
+                        onBlur={(e) => {
+                          const val = parseFloat(e.target.value)
+                          if (!isNaN(val)) {
+                            update(item.id, { unitQty: String(normalizeQuantity(val, itemInteger)), finalPriceDirty: false })
+                          }
+                        }}
                         placeholder="1"
                       />
                     </div>

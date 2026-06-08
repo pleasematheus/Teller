@@ -1,11 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { isUnitInteger, validateQuantity } from "./unitQuantity";
+import { isUnitInteger, validateQuantity, normalizeQuantity } from "./unitQuantity";
 import type { UnitOfMeasure } from "@/types/units";
 
 const units: UnitOfMeasure[] = [
   { id: 1, name: "unidade", abbreviation: "un", active: true, integer: true },
   { id: 2, name: "quilograma", abbreviation: "kg", active: true, integer: false },
 ];
+
+describe("normalizeQuantity", () => {
+  it("arredonda decimal para inteiro mais proximo em unidade inteira", () => {
+    expect(normalizeQuantity(1.5, true)).toBe(2);
+    expect(normalizeQuantity(1.4, true)).toBe(1);
+    expect(normalizeQuantity(2.9, true)).toBe(3);
+  });
+
+  it("aplica piso minimo 1 em unidade inteira", () => {
+    expect(normalizeQuantity(0, true)).toBe(1);
+    expect(normalizeQuantity(-5, true)).toBe(1);
+    expect(normalizeQuantity(0.4, true)).toBe(1);
+  });
+
+  it("preserva decimal em unidade fracionada", () => {
+    expect(normalizeQuantity(1.5, false)).toBe(1.5);
+    expect(normalizeQuantity(0.75, false)).toBe(0.75);
+  });
+
+  it("aplica piso minimo positivo em unidade fracionada", () => {
+    expect(normalizeQuantity(0, false)).toBe(0.001);
+    expect(normalizeQuantity(-1, false)).toBe(0.001);
+  });
+});
 
 describe("isUnitInteger", () => {
   it("retorna true para unidade marcada como inteira", () => {
