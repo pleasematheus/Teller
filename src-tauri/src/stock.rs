@@ -850,6 +850,58 @@ pub fn delete_purchase(purchase_id: i64, state: State<DbState>) -> Result<(), St
     result
 }
 
+#[derive(Serialize)]
+pub struct ProductPurchaseRow {
+    pub purchase_id: i64,
+    pub purchase_date: String,
+    pub quantity: f64,
+    pub unit_cost: f64,
+    pub total: f64,
+}
+
+fn list_product_purchases_raw(
+    conn: &Connection,
+    product_id: i64,
+) -> Result<Vec<ProductPurchaseRow>, String> {
+    let mut stmt = conn
+        .prepare(r#"
+            SELECT p.id, CAST(p.created_at AS VARCHAR),
+                   CAST(pi.quantity AS DOUBLE),
+                   CAST(pi.unit_cost AS DOUBLE),
+                   CAST(pi.quantity AS DOUBLE) * CAST(pi.unit_cost AS DOUBLE)
+            FROM "Purchase_Items" pi
+            JOIN "Purchases" p ON p.id = pi.purchase_id
+            WHERE pi.product_id = ? AND p.status = 'closed'
+            ORDER BY p.created_at DESC
+        "#)
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![product_id], |row| {
+            Ok(ProductPurchaseRow {
+                purchase_id: row.get(0)?,
+                purchase_date: row.get(1)?,
+                quantity: row.get(2)?,
+                unit_cost: row.get(3)?,
+                total: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(rows)
+}
+
+#[tauri::command]
+pub fn list_product_purchases(
+    product_id: i64,
+    state: State<DbState>,
+) -> Result<Vec<ProductPurchaseRow>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    list_product_purchases_raw(&conn, product_id)
+}
+
 #[cfg(test)]
 pub(crate) fn add_product_component_in_test(conn: &Connection, parent_id: i64, child_id: i64, quantity: i64) {
     conn.execute(
@@ -2007,5 +2059,55 @@ mod tests {
             .query_row(r#"SELECT COUNT(*) FROM "Products""#, [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0, "no product must remain after failed close");
+    }
+
+    #[test]
+    fn list_product_purchases_returns_closed_purchase() {
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Farinha", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id: Some(product_id),
+            quantity: 5.0,
+            unit_cost: 2.0,
+            final_price: 4.0,
+            ..Default::default()
+        }];
+        run_purchase(&conn, 0.0, items);
+
+        let rows = list_product_purchases_raw(&conn, product_id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!((rows[0].quantity - 5.0).abs() < 1e-9);
+        assert!((rows[0].unit_cost - 2.0).abs() < 1e-9);
+        assert!((rows[0].total - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn list_product_purchases_returns_empty_when_no_purchases() {
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Sem compras", false);
+        let rows = list_product_purchases_raw(&conn, product_id).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn list_product_purchases_ignores_open_drafts() {
+        let conn = test_db();
+        let product_id = insert_product(&conn, "Farinha", false);
+
+        let items = vec![PurchaseItemInput {
+            product_id: Some(product_id),
+            quantity: 3.0,
+            unit_cost: 1.0,
+            final_price: 2.0,
+            ..Default::default()
+        }];
+
+        conn.execute_batch("BEGIN").unwrap();
+        create_purchase_draft(&conn, 0.0, &items).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        let rows = list_product_purchases_raw(&conn, product_id).unwrap();
+        assert!(rows.is_empty(), "rascunhos abertos nao devem aparecer no historico de compras");
     }
 }

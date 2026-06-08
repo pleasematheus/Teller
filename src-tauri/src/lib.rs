@@ -68,6 +68,8 @@ pub fn run() {
             sales::close_sale,
             sales::get_sale_items,
             sales::get_sale_payments,
+            sales::get_product_sales_history,
+            stock::list_product_purchases,
             settings::list_payment_methods,
             financials::list_financial_entries,
             financials::list_recurring_suggestions,
