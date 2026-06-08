@@ -26,14 +26,16 @@ pub fn list_financial_entries(
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT id, type, name, category, amount, is_fixed, is_recurring,
                    CAST(reference_date AS VARCHAR), expense_subtype
             FROM "Financial_Entries"
             WHERE strftime('%Y-%m', reference_date) = ?
               AND type = ?
             ORDER BY reference_date DESC, created_at DESC
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let entries = stmt
@@ -67,7 +69,8 @@ pub fn list_recurring_suggestions(
 
     // Entries marked recurring from past months not yet registered in target month
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT DISTINCT ON (name, type)
                 id, type, name, category, amount, is_fixed, is_recurring,
                 CAST(reference_date AS VARCHAR), expense_subtype
@@ -80,7 +83,8 @@ pub fn list_recurring_suggestions(
                 WHERE strftime('%Y-%m', reference_date) = ?
               )
             ORDER BY name, type, reference_date DESC
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let suggestions = stmt
@@ -139,7 +143,16 @@ pub fn create_financial_entry(
            (type, name, category, amount, is_fixed, is_recurring, expense_subtype,
             reference_date, updated_at, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS DATE), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-        params![entry_type, name, category, amount, is_fixed, is_recurring, expense_subtype, reference_date],
+        params![
+            entry_type,
+            name,
+            category,
+            amount,
+            is_fixed,
+            is_recurring,
+            expense_subtype,
+            reference_date
+        ],
     )
     .map_err(|e| e.to_string())?;
 
@@ -180,7 +193,16 @@ pub fn update_financial_entry(
                    expense_subtype = ?,
                    reference_date = CAST(? AS DATE), updated_at = CURRENT_TIMESTAMP
                WHERE id = ?"#,
-            params![name, category, amount, is_fixed, is_recurring, expense_subtype, reference_date, id],
+            params![
+                name,
+                category,
+                amount,
+                is_fixed,
+                is_recurring,
+                expense_subtype,
+                reference_date,
+                id
+            ],
         )
         .map_err(|e| e.to_string())?;
 
@@ -234,7 +256,8 @@ mod tests {
             r#"SELECT id FROM "Financial_Entries" WHERE name = ? ORDER BY created_at DESC LIMIT 1"#,
             params![name],
             |r| r.get(0),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]
@@ -251,37 +274,82 @@ mod tests {
     #[test]
     fn list_financial_entries_filters_by_month_and_type() {
         let conn = test_db();
-        insert_financial_entry(&conn, "Aluguel", "expense", 1200.0, true, true, "2026-05-01");
-        insert_financial_entry(&conn, "Energia", "expense", 300.0, true, false, "2026-05-15");
-        insert_financial_entry(&conn, "Venda extra", "income", 500.0, false, false, "2026-05-10");
-        insert_financial_entry(&conn, "Aluguel", "expense", 1200.0, true, true, "2026-04-01");
+        insert_financial_entry(
+            &conn,
+            "Aluguel",
+            "expense",
+            1200.0,
+            true,
+            true,
+            "2026-05-01",
+        );
+        insert_financial_entry(
+            &conn,
+            "Energia",
+            "expense",
+            300.0,
+            true,
+            false,
+            "2026-05-15",
+        );
+        insert_financial_entry(
+            &conn,
+            "Venda extra",
+            "income",
+            500.0,
+            false,
+            false,
+            "2026-05-10",
+        );
+        insert_financial_entry(
+            &conn,
+            "Aluguel",
+            "expense",
+            1200.0,
+            true,
+            true,
+            "2026-04-01",
+        );
 
-        let count: i64 = conn.query_row(
-            r#"SELECT COUNT(*) FROM "Financial_Entries"
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Financial_Entries"
                WHERE strftime('%Y-%m', reference_date) = '2026-05' AND type = 'expense'"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 2);
 
-        let income_count: i64 = conn.query_row(
-            r#"SELECT COUNT(*) FROM "Financial_Entries"
+        let income_count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Financial_Entries"
                WHERE strftime('%Y-%m', reference_date) = '2026-05' AND type = 'income'"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(income_count, 1);
     }
 
     #[test]
     fn list_recurring_suggestions_returns_missing_entries_for_month() {
         let conn = test_db();
-        insert_financial_entry(&conn, "Aluguel", "expense", 1200.0, true, true, "2026-04-01");
+        insert_financial_entry(
+            &conn,
+            "Aluguel",
+            "expense",
+            1200.0,
+            true,
+            true,
+            "2026-04-01",
+        );
         insert_financial_entry(&conn, "Energia", "expense", 300.0, true, true, "2026-04-01");
         insert_financial_entry(&conn, "Energia", "expense", 320.0, true, true, "2026-05-01");
 
-        let suggestion_count: i64 = conn.query_row(
-            r#"SELECT COUNT(*) FROM (
+        let suggestion_count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM (
                 SELECT DISTINCT ON (name, type) name, type
                 FROM "Financial_Entries"
                 WHERE is_recurring = true
@@ -293,9 +361,10 @@ mod tests {
                   )
                 ORDER BY name, type, reference_date DESC
             )"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(suggestion_count, 1);
     }
 
@@ -303,16 +372,20 @@ mod tests {
     fn delete_financial_entry_removes_record() {
         let conn = test_db();
         let id = insert_financial_entry(&conn, "Taxa", "expense", 50.0, false, false, "2026-05-01");
-        let rows = conn.execute(
-            r#"DELETE FROM "Financial_Entries" WHERE id = ?"#,
-            params![id],
-        ).unwrap();
+        let rows = conn
+            .execute(
+                r#"DELETE FROM "Financial_Entries" WHERE id = ?"#,
+                params![id],
+            )
+            .unwrap();
         assert_eq!(rows, 1);
-        let count: i64 = conn.query_row(
-            r#"SELECT COUNT(*) FROM "Financial_Entries" WHERE id = ?"#,
-            params![id],
-            |r| r.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Financial_Entries" WHERE id = ?"#,
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 0);
     }
 }

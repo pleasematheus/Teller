@@ -223,11 +223,11 @@ pub fn compute_dre(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db;
     use crate::auth::insert_user;
+    use crate::db::test_db;
     use crate::products::insert_product;
-    use crate::settings::insert_payment_method;
     use crate::sales::{do_close_sale_work, SaleItemInput, SalePaymentInput};
+    use crate::settings::insert_payment_method;
     use duckdb::params;
 
     fn insert_financial_entry(
@@ -291,7 +291,11 @@ mod tests {
         )
         .unwrap();
 
-        let items = vec![SaleItemInput { product_id, quantity: 1, discount: 0.0 }];
+        let items = vec![SaleItemInput {
+            product_id,
+            quantity: 1,
+            discount: 0.0,
+        }];
         let payments = vec![SalePaymentInput {
             payment_method_id: pm_id,
             amount_paid: 20.0,
@@ -306,7 +310,14 @@ mod tests {
         .unwrap();
         conn.execute_batch("COMMIT").unwrap();
 
-        insert_financial_entry(&conn, "expense", "aluguel", Some("despesa"), 3.0, "2026-05-01");
+        insert_financial_entry(
+            &conn,
+            "expense",
+            "aluguel",
+            Some("despesa"),
+            3.0,
+            "2026-05-01",
+        );
         insert_financial_entry(&conn, "expense", "banco", Some("juros"), 1.0, "2026-05-01");
         insert_financial_entry(&conn, "expense", "ir", Some("imposto"), 2.0, "2026-05-01");
 
@@ -322,7 +333,14 @@ mod tests {
     #[test]
     fn dre_com_prejuizo_retorna_valores_negativos() {
         let conn = test_db();
-        insert_financial_entry(&conn, "expense", "pessoal", Some("custo"), 1000.0, "2026-06-01");
+        insert_financial_entry(
+            &conn,
+            "expense",
+            "pessoal",
+            Some("custo"),
+            1000.0,
+            "2026-06-01",
+        );
         let dre = compute_dre(&conn, "2026-06-01", "2026-06-30").unwrap();
         assert_eq!(dre.receita_bruta, 0.0);
         assert!(dre.lucro_operacional < 0.0);

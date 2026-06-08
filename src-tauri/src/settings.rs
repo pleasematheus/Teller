@@ -52,11 +52,13 @@ pub fn list_payment_methods(state: State<DbState>) -> Result<Vec<PaymentMethod>,
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut method_stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT id, name, active
             FROM "Payment_Methods"
             ORDER BY active DESC, name
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let methods_raw: Vec<(i64, String, bool)> = method_stmt
@@ -66,11 +68,13 @@ pub fn list_payment_methods(state: State<DbState>) -> Result<Vec<PaymentMethod>,
         .map_err(|e| e.to_string())?;
 
     let mut fee_stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT id, payment_method_id, installments, fee_percent, fixed_fee
             FROM "Transaction_Fees"
             ORDER BY payment_method_id, installments
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let fees_raw: Vec<TransactionFee> = fee_stmt
@@ -89,7 +93,10 @@ pub fn list_payment_methods(state: State<DbState>) -> Result<Vec<PaymentMethod>,
 
     let mut fees_by_method: HashMap<i64, Vec<TransactionFee>> = HashMap::new();
     for fee in fees_raw {
-        fees_by_method.entry(fee.payment_method_id).or_default().push(fee);
+        fees_by_method
+            .entry(fee.payment_method_id)
+            .or_default()
+            .push(fee);
     }
 
     let methods = methods_raw
@@ -145,8 +152,14 @@ pub fn update_business_settings(
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     // Columns are DOUBLE (not DECIMAL): Option<f64> binds and reads correctly via params!.
-    let ir: &dyn duckdb::types::ToSql = match &investment_rate { Some(v) => v, None => &duckdb::types::Null };
-    let pm: &dyn duckdb::types::ToSql = match &profit_margin { Some(v) => v, None => &duckdb::types::Null };
+    let ir: &dyn duckdb::types::ToSql = match &investment_rate {
+        Some(v) => v,
+        None => &duckdb::types::Null,
+    };
+    let pm: &dyn duckdb::types::ToSql = match &profit_margin {
+        Some(v) => v,
+        None => &duckdb::types::Null,
+    };
     conn.execute(
         r#"UPDATE "Business_Settings"
            SET name = ?, investment_rate = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP"#,
@@ -320,10 +333,7 @@ pub fn delete_payment_method(id: i64, state: State<DbState>) -> Result<(), Strin
     .map_err(|e| e.to_string())?;
 
     let rows = conn
-        .execute(
-            r#"DELETE FROM "Payment_Methods" WHERE id = ?"#,
-            params![id],
-        )
+        .execute(r#"DELETE FROM "Payment_Methods" WHERE id = ?"#, params![id])
         .map_err(|e| e.to_string())?;
 
     if rows == 0 {
@@ -340,12 +350,14 @@ pub fn list_transaction_fees(
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT id, payment_method_id, installments, fee_percent, fixed_fee
             FROM "Transaction_Fees"
             WHERE payment_method_id = ?
             ORDER BY installments
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
 
     let fees = stmt
@@ -416,11 +428,13 @@ pub fn upsert_transaction_fee(
 pub fn list_units_of_measure(state: State<DbState>) -> Result<Vec<UnitOfMeasure>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare(r#"
+        .prepare(
+            r#"
             SELECT id, name, abbreviation, active, "integer"
             FROM "Units_Of_Measure"
             ORDER BY active DESC, name
-        "#)
+        "#,
+        )
         .map_err(|e| e.to_string())?;
     let units = stmt
         .query_map([], |row| {
@@ -529,11 +543,7 @@ pub fn rename_unit_of_measure(
 }
 
 #[tauri::command]
-pub fn update_unit_of_measure(
-    id: i64,
-    active: bool,
-    state: State<DbState>,
-) -> Result<(), String> {
+pub fn update_unit_of_measure(id: i64, active: bool, state: State<DbState>) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let rows = conn
         .execute(
@@ -575,7 +585,10 @@ pub fn delete_unit_of_measure(id: i64, state: State<DbState>) -> Result<(), Stri
     }
 
     let rows = conn
-        .execute(r#"DELETE FROM "Units_Of_Measure" WHERE id = ?"#, params![id])
+        .execute(
+            r#"DELETE FROM "Units_Of_Measure" WHERE id = ?"#,
+            params![id],
+        )
         .map_err(|e| e.to_string())?;
 
     if rows == 0 {
@@ -595,7 +608,11 @@ fn system_setting_default(key: &str) -> String {
 fn normalize_setting_value(key: &str, value: &str) -> String {
     match key {
         "allow_negative_stock_sale" | "minimize_to_tray" => {
-            if value == "true" { "true".to_string() } else { "false".to_string() }
+            if value == "true" {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
         }
         _ => value.to_string(),
     }
@@ -655,7 +672,8 @@ pub(crate) fn insert_payment_method(conn: &duckdb::Connection, name: &str) -> i6
            RETURNING id"#,
         params![name],
         |r| r.get(0),
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -679,14 +697,19 @@ fn insert_business_settings_full(conn: &duckdb::Connection, name: &str, inv: f64
 }
 
 #[cfg(test)]
-pub(crate) fn insert_unit_of_measure(conn: &duckdb::Connection, name: &str, abbreviation: &str) -> i64 {
+pub(crate) fn insert_unit_of_measure(
+    conn: &duckdb::Connection,
+    name: &str,
+    abbreviation: &str,
+) -> i64 {
     conn.query_row(
         r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
            VALUES (?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            RETURNING id"#,
         params![name, abbreviation],
         |r| r.get(0),
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -704,7 +727,8 @@ pub(crate) fn insert_transaction_fee(
            RETURNING id"#,
         params![payment_method_id, installments, fee_percent, fixed_fee],
         |r| r.get(0),
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -716,7 +740,11 @@ mod tests {
     fn update_business_settings_rejects_empty_name() {
         let result = {
             let name = "  ".trim().to_string();
-            if name.is_empty() { Err("Nome da empresa não pode ser vazio".to_string()) } else { Ok(()) }
+            if name.is_empty() {
+                Err("Nome da empresa não pode ser vazio".to_string())
+            } else {
+                Ok(())
+            }
         };
         assert!(result.is_err());
     }
@@ -736,18 +764,20 @@ mod tests {
     fn update_business_settings_persists_new_values() {
         let conn = test_db();
         insert_business_settings_full(&conn, "Empresa Velha", 0.10, 0.20);
-        let rows = conn.execute(
-            r#"UPDATE "Business_Settings"
+        let rows = conn
+            .execute(
+                r#"UPDATE "Business_Settings"
                SET name = 'Empresa Nova', investment_rate = 0.15, profit_margin = 0.25,
                    updated_at = CURRENT_TIMESTAMP"#,
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
         assert_eq!(rows, 1);
-        let name: String = conn.query_row(
-            r#"SELECT name FROM "Business_Settings" LIMIT 1"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let name: String = conn
+            .query_row(r#"SELECT name FROM "Business_Settings" LIMIT 1"#, [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(name, "Empresa Nova");
     }
 
@@ -773,7 +803,11 @@ mod tests {
         let conn = test_db();
         insert_user_local(&conn, "Carol", "carol", true);
         let user_id: i64 = conn
-            .query_row(r#"SELECT id FROM "Users" WHERE nickname = 'carol'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT id FROM "Users" WHERE nickname = 'carol'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let new_hash = bcrypt::hash("novasenha", DEFAULT_COST).unwrap();
         let rows = conn.execute(
@@ -782,7 +816,11 @@ mod tests {
         ).unwrap();
         assert_eq!(rows, 1);
         let stored: String = conn
-            .query_row(r#"SELECT password_hash FROM "Users" WHERE id = ?"#, params![user_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT password_hash FROM "Users" WHERE id = ?"#,
+                params![user_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(bcrypt::verify("novasenha", &stored).unwrap());
     }
@@ -792,7 +830,11 @@ mod tests {
         let conn = test_db();
         insert_user_local(&conn, "Solo", "solo", true);
         let user_id: i64 = conn
-            .query_row(r#"SELECT id FROM "Users" WHERE nickname = 'solo'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT id FROM "Users" WHERE nickname = 'solo'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let count: i64 = conn
             .query_row(
@@ -810,15 +852,25 @@ mod tests {
         insert_user_local(&conn, "User1", "user1", true);
         insert_user_local(&conn, "User2", "user2", true);
         let user_id: i64 = conn
-            .query_row(r#"SELECT id FROM "Users" WHERE nickname = 'user1'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT id FROM "Users" WHERE nickname = 'user1'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        let rows = conn.execute(
-            r#"UPDATE "Users" SET active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
-            params![user_id],
-        ).unwrap();
+        let rows = conn
+            .execute(
+                r#"UPDATE "Users" SET active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+                params![user_id],
+            )
+            .unwrap();
         assert_eq!(rows, 1);
         let active: bool = conn
-            .query_row(r#"SELECT active FROM "Users" WHERE id = ?"#, params![user_id], |r| r.get(0))
+            .query_row(
+                r#"SELECT active FROM "Users" WHERE id = ?"#,
+                params![user_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(!active);
     }
@@ -836,9 +888,14 @@ mod tests {
             r#"INSERT INTO "Payment_Methods" (name, active, updated_at, created_at)
                VALUES ('Pix', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
+        )
+        .unwrap();
         let active: bool = conn
-            .query_row(r#"SELECT active FROM "Payment_Methods" WHERE name = 'Pix'"#, [], |r| r.get(0))
+            .query_row(
+                r#"SELECT active FROM "Payment_Methods" WHERE name = 'Pix'"#,
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(active);
     }
@@ -852,16 +909,22 @@ mod tests {
         insert_transaction_fee(&conn, pm_id, 1, 0.015, 0.0);
         let fee_id = insert_transaction_fee(&conn, pm_id, 2, 0.025, 0.5);
 
-        let count: i64 = conn.query_row(
-            r#"SELECT COUNT(*) FROM "Transaction_Fees" WHERE payment_method_id = ?"#,
-            params![pm_id], |r| r.get(0),
-        ).unwrap();
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Transaction_Fees" WHERE payment_method_id = ?"#,
+                params![pm_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 2);
 
-        let fp: f64 = conn.query_row(
-            r#"SELECT fee_percent FROM "Transaction_Fees" WHERE id = ?"#,
-            params![fee_id], |r| r.get(0),
-        ).unwrap();
+        let fp: f64 = conn
+            .query_row(
+                r#"SELECT fee_percent FROM "Transaction_Fees" WHERE id = ?"#,
+                params![fee_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!((fp - 0.025).abs() < 1e-9);
     }
 
@@ -881,10 +944,13 @@ mod tests {
             params![existing],
         ).unwrap();
 
-        let fp: f64 = conn.query_row(
-            r#"SELECT fee_percent FROM "Transaction_Fees" WHERE id = ?"#,
-            params![existing], |r| r.get(0),
-        ).unwrap();
+        let fp: f64 = conn
+            .query_row(
+                r#"SELECT fee_percent FROM "Transaction_Fees" WHERE id = ?"#,
+                params![existing],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!((fp - 0.03).abs() < 1e-9);
     }
 
@@ -902,13 +968,17 @@ mod tests {
         insert_transaction_fee(&conn, pm_id, 1, 0.01, 0.0);
         insert_transaction_fee(&conn, pm_id, 2, 0.02, 0.0);
 
-        let mut stmt = conn.prepare(
-            r#"SELECT installments FROM "Transaction_Fees"
+        let mut stmt = conn
+            .prepare(
+                r#"SELECT installments FROM "Transaction_Fees"
                WHERE payment_method_id = ? ORDER BY installments"#,
-        ).unwrap();
+            )
+            .unwrap();
         let installments: Vec<i64> = stmt
-            .query_map(params![pm_id], |r| r.get(0)).unwrap()
-            .collect::<Result<Vec<_>, _>>().unwrap();
+            .query_map(params![pm_id], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(installments, vec![1, 2, 3]);
     }
 
@@ -919,13 +989,19 @@ mod tests {
         insert_transaction_fee(&conn, pm_id, 1, 0.015, 0.0);
         insert_transaction_fee(&conn, pm_id, 2, 0.025, 0.5);
 
-        let mut stmt = conn.prepare(
-            r#"SELECT id, payment_method_id, installments, fee_percent, fixed_fee
+        let mut stmt = conn
+            .prepare(
+                r#"SELECT id, payment_method_id, installments, fee_percent, fixed_fee
                FROM "Transaction_Fees" WHERE payment_method_id = ? ORDER BY installments"#,
-        ).unwrap();
+            )
+            .unwrap();
         let fees: Vec<(i64, i64, i64, f64, f64)> = stmt
-            .query_map(params![pm_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
-            .unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+            .query_map(params![pm_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(fees.len(), 2);
         assert_eq!(fees[0].2, 1);
         assert_eq!(fees[1].2, 2);
@@ -935,11 +1011,14 @@ mod tests {
     fn list_payment_methods_returns_empty_fees_for_method_without_fees() {
         let conn = test_db();
         insert_payment_method(&conn, "Dinheiro");
-        let count: i64 = conn.query_row(
-            r#"SELECT COUNT(*) FROM "Transaction_Fees" WHERE payment_method_id IN
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Transaction_Fees" WHERE payment_method_id IN
                (SELECT id FROM "Payment_Methods" WHERE name = 'Dinheiro')"#,
-            [], |r| r.get(0),
-        ).unwrap();
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -950,7 +1029,8 @@ mod tests {
         conn.execute(
             r#"UPDATE "Payment_Methods" SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
             params!["Cartão Novo", pm_id],
-        ).unwrap();
+        )
+        .unwrap();
         let name: String = conn
             .query_row(
                 r#"SELECT name FROM "Payment_Methods" WHERE id = ?"#,
@@ -982,7 +1062,8 @@ mod tests {
         conn.execute(
             r#"DELETE FROM "Payment_Methods" WHERE id = ?"#,
             params![pm_id],
-        ).unwrap();
+        )
+        .unwrap();
         let count: i64 = conn
             .query_row(
                 r#"SELECT COUNT(*) FROM "Payment_Methods" WHERE id = ?"#,
@@ -1014,12 +1095,15 @@ mod tests {
             r#"INSERT INTO "Units_Of_Measure" (name, abbreviation, active, updated_at, created_at)
                VALUES ('kg', 'kg', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
-        let active: bool = conn.query_row(
-            r#"SELECT active FROM "Units_Of_Measure" WHERE name = 'kg'"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        )
+        .unwrap();
+        let active: bool = conn
+            .query_row(
+                r#"SELECT active FROM "Units_Of_Measure" WHERE name = 'kg'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(active);
     }
 
@@ -1032,7 +1116,10 @@ mod tests {
                VALUES ('kg', 'kilo', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
         );
-        assert!(result.is_err(), "duplicate name should violate UNIQUE constraint");
+        assert!(
+            result.is_err(),
+            "duplicate name should violate UNIQUE constraint"
+        );
     }
 
     // integer flag tests
@@ -1045,11 +1132,13 @@ mod tests {
                VALUES ('un', 'un', true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
         ).unwrap();
-        let integer: bool = conn.query_row(
-            r#"SELECT "integer" FROM "Units_Of_Measure" WHERE name = 'un'"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let integer: bool = conn
+            .query_row(
+                r#"SELECT "integer" FROM "Units_Of_Measure" WHERE name = 'un'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(integer);
     }
 
@@ -1058,11 +1147,13 @@ mod tests {
         let conn = test_db();
         // Sem informar "integer": default da coluna é TRUE.
         let uid = insert_unit_of_measure(&conn, "kg", "kg");
-        let default_integer: bool = conn.query_row(
-            r#"SELECT "integer" FROM "Units_Of_Measure" WHERE id = ?"#,
-            params![uid],
-            |r| r.get(0),
-        ).unwrap();
+        let default_integer: bool = conn
+            .query_row(
+                r#"SELECT "integer" FROM "Units_Of_Measure" WHERE id = ?"#,
+                params![uid],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(default_integer);
 
         // Informando false explicitamente.
@@ -1071,11 +1162,13 @@ mod tests {
                VALUES ('L', 'L', true, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
         ).unwrap();
-        let integer: bool = conn.query_row(
-            r#"SELECT "integer" FROM "Units_Of_Measure" WHERE name = 'L'"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let integer: bool = conn
+            .query_row(
+                r#"SELECT "integer" FROM "Units_Of_Measure" WHERE name = 'L'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(!integer);
     }
 
@@ -1087,11 +1180,13 @@ mod tests {
                VALUES ('un', 'un', true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
         ).unwrap();
-        let (name, integer): (String, bool) = conn.query_row(
-            r#"SELECT name, "integer" FROM "Units_Of_Measure" ORDER BY active DESC, name"#,
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        ).unwrap();
+        let (name, integer): (String, bool) = conn
+            .query_row(
+                r#"SELECT name, "integer" FROM "Units_Of_Measure" ORDER BY active DESC, name"#,
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(name, "un");
         assert!(integer);
     }
@@ -1106,7 +1201,8 @@ mod tests {
                VALUES ('Produto Teste', true, true, 1.5, 10.0, 15.0, 0.0, 'Unidade',
                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         conn.execute("BEGIN", []).unwrap();
         conn.execute(
@@ -1121,19 +1217,23 @@ mod tests {
         ).unwrap();
         conn.execute("COMMIT", []).unwrap();
 
-        let (new_name, integer): (String, bool) = conn.query_row(
-            r#"SELECT name, "integer" FROM "Units_Of_Measure" WHERE id = ?"#,
-            params![uid],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        ).unwrap();
+        let (new_name, integer): (String, bool) = conn
+            .query_row(
+                r#"SELECT name, "integer" FROM "Units_Of_Measure" WHERE id = ?"#,
+                params![uid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(new_name, "Unidade Nova");
         assert!(!integer);
 
-        let unit: String = conn.query_row(
-            r#"SELECT unit FROM "Products" WHERE name = 'Produto Teste'"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let unit: String = conn
+            .query_row(
+                r#"SELECT unit FROM "Products" WHERE name = 'Produto Teste'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(unit, "Unidade Nova");
     }
 
@@ -1149,7 +1249,8 @@ mod tests {
                VALUES ('Produto Teste', true, true, 1.5, 10.0, 15.0, 0.0, 'Unidade',
                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         conn.execute("BEGIN", []).unwrap();
         conn.execute(
@@ -1162,18 +1263,22 @@ mod tests {
         ).unwrap();
         conn.execute("COMMIT", []).unwrap();
 
-        let unit: String = conn.query_row(
-            r#"SELECT unit FROM "Products" WHERE name = 'Produto Teste'"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let unit: String = conn
+            .query_row(
+                r#"SELECT unit FROM "Products" WHERE name = 'Produto Teste'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(unit, "Unidade Nova");
 
-        let new_name: String = conn.query_row(
-            r#"SELECT name FROM "Units_Of_Measure" WHERE id = ?"#,
-            params![uid],
-            |r| r.get(0),
-        ).unwrap();
+        let new_name: String = conn
+            .query_row(
+                r#"SELECT name FROM "Units_Of_Measure" WHERE id = ?"#,
+                params![uid],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(new_name, "Unidade Nova");
     }
 
@@ -1187,11 +1292,13 @@ mod tests {
             r#"UPDATE "Units_Of_Measure" SET active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
             params![uid],
         ).unwrap();
-        let active: bool = conn.query_row(
-            r#"SELECT active FROM "Units_Of_Measure" WHERE id = ?"#,
-            params![uid],
-            |r| r.get(0),
-        ).unwrap();
+        let active: bool = conn
+            .query_row(
+                r#"SELECT active FROM "Units_Of_Measure" WHERE id = ?"#,
+                params![uid],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(!active);
     }
 
@@ -1201,18 +1308,26 @@ mod tests {
     fn delete_unit_of_measure_removes_unused() {
         let conn = test_db();
         let uid = insert_unit_of_measure(&conn, "kg", "kg");
-        let linked: i64 = conn.query_row(
-            r#"SELECT COUNT(*) FROM "Products" WHERE unit = 'kg'"#,
-            [],
-            |r| r.get(0),
-        ).unwrap();
+        let linked: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Products" WHERE unit = 'kg'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(linked, 0);
-        conn.execute(r#"DELETE FROM "Units_Of_Measure" WHERE id = ?"#, params![uid]).unwrap();
-        let count: i64 = conn.query_row(
-            r#"SELECT COUNT(*) FROM "Units_Of_Measure" WHERE id = ?"#,
+        conn.execute(
+            r#"DELETE FROM "Units_Of_Measure" WHERE id = ?"#,
             params![uid],
-            |r| r.get(0),
-        ).unwrap();
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Units_Of_Measure" WHERE id = ?"#,
+                params![uid],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -1226,19 +1341,27 @@ mod tests {
                VALUES ('Produto', true, true, 1.5, 10.0, 15.0, 0.0, 'kg',
                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let name: String = conn.query_row(
-            r#"SELECT name FROM "Units_Of_Measure" WHERE id = ?"#,
-            params![uid],
-            |r| r.get(0),
-        ).unwrap();
-        let linked: i64 = conn.query_row(
-            r#"SELECT COUNT(*) FROM "Products" WHERE unit = ?"#,
-            params![name],
-            |r| r.get(0),
-        ).unwrap();
-        assert!(linked > 0, "should have linked products preventing deletion");
+        let name: String = conn
+            .query_row(
+                r#"SELECT name FROM "Units_Of_Measure" WHERE id = ?"#,
+                params![uid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let linked: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Products" WHERE unit = ?"#,
+                params![name],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            linked > 0,
+            "should have linked products preventing deletion"
+        );
     }
 
     #[test]
@@ -1329,7 +1452,10 @@ mod tests {
     #[test]
     fn normalize_setting_value_minimize_to_tray_boolean() {
         assert_eq!(normalize_setting_value("minimize_to_tray", "true"), "true");
-        assert_eq!(normalize_setting_value("minimize_to_tray", "false"), "false");
+        assert_eq!(
+            normalize_setting_value("minimize_to_tray", "false"),
+            "false"
+        );
         assert_eq!(normalize_setting_value("minimize_to_tray", "yes"), "false");
     }
 

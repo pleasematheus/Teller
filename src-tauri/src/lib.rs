@@ -1,7 +1,7 @@
 use std::sync::Mutex;
-use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
+use tauri::Manager;
 
 pub mod auth;
 pub mod db;
@@ -12,7 +12,7 @@ pub mod sales;
 pub mod settings;
 pub mod stock;
 
-pub use db::{DbState, init_schema, open_database, run_migrations};
+pub use db::{init_schema, open_database, run_migrations, DbState};
 
 fn resolve_db_path(
     app_env: Option<&str>,
@@ -246,7 +246,12 @@ mod resolve_db_path_tests {
     #[test]
     fn production_custom_path_returned() {
         let data_dir = Path::new("/data");
-        let result = resolve_db_path(Some("production"), None, Some("D:/dados/teller.db"), data_dir);
+        let result = resolve_db_path(
+            Some("production"),
+            None,
+            Some("D:/dados/teller.db"),
+            data_dir,
+        );
         assert_eq!(result, std::path::PathBuf::from("D:/dados/teller.db"));
     }
 
