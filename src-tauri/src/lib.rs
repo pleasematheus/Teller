@@ -12,7 +12,7 @@ pub mod sales;
 pub mod settings;
 pub mod stock;
 
-pub use db::{DbState, init_schema, open_database};
+pub use db::{DbState, init_schema, open_database, run_migrations};
 
 fn resolve_db_path(
     app_env: Option<&str>,
@@ -60,10 +60,14 @@ pub fn run() {
             if db_path.starts_with(&data_dir) {
                 std::fs::create_dir_all(&data_dir)?;
             }
-            let conn = open_database(&db_path)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
             let io_err = |e: String| std::io::Error::new(std::io::ErrorKind::Other, e);
+            let conn = open_database(&db_path)
+                .map_err(|e| io_err(e.to_string()))?;
             init_schema(&conn).map_err(&io_err)?;
+            drop(conn);
+            run_migrations(Some(&db_path)).map_err(&io_err)?;
+            let conn = open_database(&db_path)
+                .map_err(|e| io_err(e.to_string()))?;
             app.manage(DbState(Mutex::new(conn)));
 
             let show_item = MenuItem::with_id(app, "show", "Abrir", true, None::<&str>)?;
