@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Teller",
   "version": "0.1.0",
-  "identifier": "com.teller.app",
+  "identifier": "Teller",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",

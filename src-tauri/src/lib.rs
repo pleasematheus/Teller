@@ -14,6 +14,32 @@ pub mod stock;
 
 pub use db::{DbState, init_schema, open_database};
 
+fn resolve_db_path(
+    app_env: Option<&str>,
+    dev: Option<&str>,
+    prod: Option<&str>,
+    data_dir: &std::path::Path,
+) -> std::path::PathBuf {
+    match app_env {
+        Some("development") => {
+            let p = dev.unwrap_or("").trim();
+            if p.is_empty() {
+                std::path::PathBuf::from("./teller-dev.db")
+            } else {
+                std::path::PathBuf::from(p)
+            }
+        }
+        _ => {
+            let p = prod.unwrap_or("").trim();
+            if p.is_empty() {
+                data_dir.join("teller.db")
+            } else {
+                std::path::PathBuf::from(p)
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     dotenvy::dotenv().ok();
@@ -21,14 +47,19 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let db_path = match std::env::var("DB_PATH") {
-                Ok(p) => std::path::PathBuf::from(p),
-                Err(_) => {
-                    let data_dir = app.path().app_data_dir()?;
-                    std::fs::create_dir_all(&data_dir)?;
-                    data_dir.join("teller.db")
-                }
-            };
+            let app_env = std::env::var("APP_ENV").ok();
+            let db_path_dev = std::env::var("DB_PATH_DEV").ok();
+            let db_path_prod = std::env::var("DB_PATH_PROD").ok();
+            let data_dir = app.path().app_data_dir()?;
+            let db_path = resolve_db_path(
+                app_env.as_deref(),
+                db_path_dev.as_deref(),
+                db_path_prod.as_deref(),
+                &data_dir,
+            );
+            if db_path.starts_with(&data_dir) {
+                std::fs::create_dir_all(&data_dir)?;
+            }
             let conn = open_database(&db_path)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
             let io_err = |e: String| std::io::Error::new(std::io::ErrorKind::Other, e);
@@ -180,4 +211,59 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod resolve_db_path_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn dev_custom_path_returned() {
+        let data_dir = Path::new("/data");
+        let result = resolve_db_path(Some("development"), Some("./custom-dev.db"), None, data_dir);
+        assert_eq!(result, std::path::PathBuf::from("./custom-dev.db"));
+    }
+
+    #[test]
+    fn dev_absent_path_uses_default() {
+        let data_dir = Path::new("/data");
+        let result = resolve_db_path(Some("development"), None, None, data_dir);
+        assert_eq!(result, std::path::PathBuf::from("./teller-dev.db"));
+    }
+
+    #[test]
+    fn dev_empty_path_uses_default() {
+        let data_dir = Path::new("/data");
+        let result = resolve_db_path(Some("development"), Some("  "), None, data_dir);
+        assert_eq!(result, std::path::PathBuf::from("./teller-dev.db"));
+    }
+
+    #[test]
+    fn production_custom_path_returned() {
+        let data_dir = Path::new("/data");
+        let result = resolve_db_path(Some("production"), None, Some("D:/dados/teller.db"), data_dir);
+        assert_eq!(result, std::path::PathBuf::from("D:/dados/teller.db"));
+    }
+
+    #[test]
+    fn production_absent_path_uses_data_dir() {
+        let data_dir = Path::new("/data");
+        let result = resolve_db_path(Some("production"), None, None, data_dir);
+        assert_eq!(result, std::path::PathBuf::from("/data/teller.db"));
+    }
+
+    #[test]
+    fn absent_app_env_falls_to_production() {
+        let data_dir = Path::new("/data");
+        let result = resolve_db_path(None, None, None, data_dir);
+        assert_eq!(result, std::path::PathBuf::from("/data/teller.db"));
+    }
+
+    #[test]
+    fn unknown_app_env_falls_to_production() {
+        let data_dir = Path::new("/data");
+        let result = resolve_db_path(Some("staging"), None, None, data_dir);
+        assert_eq!(result, std::path::PathBuf::from("/data/teller.db"));
+    }
 }
