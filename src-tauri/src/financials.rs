@@ -1,4 +1,4 @@
-use duckdb::{params, Connection};
+use duckdb::params;
 use serde::Serialize;
 use tauri::State;
 
@@ -208,33 +208,34 @@ pub fn delete_financial_entry(id: i64, state: State<DbState>) -> Result<(), Stri
     Ok(())
 }
 
-fn insert_financial_entry(
-    conn: &Connection,
-    name: &str,
-    entry_type: &str,
-    amount: f64,
-    is_fixed: bool,
-    is_recurring: bool,
-    reference_date: &str,
-) -> i64 {
-    conn.execute(
-        r#"INSERT INTO "Financial_Entries"
-           (type, name, category, amount, is_fixed, is_recurring, reference_date,
-            updated_at, created_at)
-           VALUES (?, ?, 'geral', ?, ?, ?, CAST(? AS DATE), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-        params![entry_type, name, amount, is_fixed, is_recurring, reference_date],
-    ).unwrap();
-    conn.query_row(
-        r#"SELECT id FROM "Financial_Entries" WHERE name = ? ORDER BY created_at DESC LIMIT 1"#,
-        params![name],
-        |r| r.get(0),
-    ).unwrap()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::test_db;
+    use duckdb::Connection;
+
+    fn insert_financial_entry(
+        conn: &Connection,
+        name: &str,
+        entry_type: &str,
+        amount: f64,
+        is_fixed: bool,
+        is_recurring: bool,
+        reference_date: &str,
+    ) -> i64 {
+        conn.execute(
+            r#"INSERT INTO "Financial_Entries"
+               (type, name, category, amount, is_fixed, is_recurring, reference_date,
+                updated_at, created_at)
+               VALUES (?, ?, 'geral', ?, ?, ?, CAST(? AS DATE), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+            params![entry_type, name, amount, is_fixed, is_recurring, reference_date],
+        ).unwrap();
+        conn.query_row(
+            r#"SELECT id FROM "Financial_Entries" WHERE name = ? ORDER BY created_at DESC LIMIT 1"#,
+            params![name],
+            |r| r.get(0),
+        ).unwrap()
+    }
 
     #[test]
     fn create_financial_entry_rejects_empty_name() {
