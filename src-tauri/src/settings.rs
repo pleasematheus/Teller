@@ -587,13 +587,14 @@ pub fn delete_unit_of_measure(id: i64, state: State<DbState>) -> Result<(), Stri
 fn system_setting_default(key: &str) -> String {
     match key {
         "allow_negative_stock_sale" => "false".to_string(),
+        "minimize_to_tray" => "false".to_string(),
         _ => String::new(),
     }
 }
 
 fn normalize_setting_value(key: &str, value: &str) -> String {
     match key {
-        "allow_negative_stock_sale" => {
+        "allow_negative_stock_sale" | "minimize_to_tray" => {
             if value == "true" { "true".to_string() } else { "false".to_string() }
         }
         _ => value.to_string(),
@@ -1318,6 +1319,18 @@ mod tests {
         // non-"true" values normalize to "false"
         let normalized3 = normalize_setting_value("allow_negative_stock_sale", "yes");
         assert_eq!(normalized3, "false");
+    }
+
+    #[test]
+    fn system_setting_default_minimize_to_tray_is_false() {
+        assert_eq!(system_setting_default("minimize_to_tray"), "false");
+    }
+
+    #[test]
+    fn normalize_setting_value_minimize_to_tray_boolean() {
+        assert_eq!(normalize_setting_value("minimize_to_tray", "true"), "true");
+        assert_eq!(normalize_setting_value("minimize_to_tray", "false"), "false");
+        assert_eq!(normalize_setting_value("minimize_to_tray", "yes"), "false");
     }
 
     #[test]

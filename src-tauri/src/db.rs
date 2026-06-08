@@ -59,6 +59,13 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    conn.execute(
+        r#"INSERT INTO "System_Settings" ("key", "value", "updated_at")
+           VALUES ('minimize_to_tray', 'false', CURRENT_TIMESTAMP)"#,
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -98,6 +105,21 @@ mod app_meta_tests {
         let value: String = conn
             .query_row(
                 r#"SELECT "value" FROM "System_Settings" WHERE "key" = 'allow_negative_stock_sale'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "false");
+    }
+
+    #[test]
+    fn init_schema_seeds_minimize_to_tray() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        let value: String = conn
+            .query_row(
+                r#"SELECT "value" FROM "System_Settings" WHERE "key" = 'minimize_to_tray'"#,
                 [],
                 |r| r.get(0),
             )
