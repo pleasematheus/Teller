@@ -1,5 +1,7 @@
 use std::sync::Mutex;
 use tauri::Manager;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
 
 pub mod auth;
 pub mod db;
@@ -32,6 +34,46 @@ pub fn run() {
             let io_err = |e: String| std::io::Error::new(std::io::ErrorKind::Other, e);
             init_schema(&conn).map_err(&io_err)?;
             app.manage(DbState(Mutex::new(conn)));
+
+            let show_item = MenuItem::with_id(app, "show", "Abrir", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            TrayIconBuilder::new()
+                .menu(&menu)
+                .tooltip("Teller")
+                .icon(app.default_window_icon().unwrap().clone())
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        if let Ok(conn) = app.state::<DbState>().0.lock() {
+                            let _ = conn.execute_batch("CHECKPOINT");
+                        }
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -99,14 +141,43 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app_handle, event| {
-            if let tauri::RunEvent::WindowEvent {
-                event: tauri::WindowEvent::Destroyed,
-                ..
-            } = event
-            {
-                if let Ok(conn) = app_handle.state::<DbState>().0.lock() {
-                    let _ = conn.execute_batch("CHECKPOINT");
+            match event {
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::CloseRequested { api, .. },
+                    ..
+                } => {
+                    let minimize = app_handle
+                        .state::<DbState>()
+                        .0
+                        .lock()
+                        .ok()
+                        .and_then(|conn| {
+                            conn.query_row(
+                                r#"SELECT COALESCE((SELECT "value" FROM "System_Settings" WHERE "key" = 'minimize_to_tray'), 'false')"#,
+                                [],
+                                |r| r.get::<_, String>(0),
+                            ).ok()
+                        })
+                        .map(|v| v == "true")
+                        .unwrap_or(false);
+
+                    if minimize {
+                        api.prevent_close();
+                        if let Some(window) = app_handle.get_webview_window(&label) {
+                            let _ = window.hide();
+                        }
+                    }
                 }
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::Destroyed,
+                    ..
+                } => {
+                    if let Ok(conn) = app_handle.state::<DbState>().0.lock() {
+                        let _ = conn.execute_batch("CHECKPOINT");
+                    }
+                }
+                _ => {}
             }
         });
 }
