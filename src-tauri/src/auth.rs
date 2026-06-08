@@ -20,7 +20,7 @@ pub(crate) struct UserRow {
     pub active: bool,
 }
 
-pub fn lookup_user(conn: &duckdb::Connection, identifier: &str) -> Result<Option<UserRow>, String> {
+pub(crate) fn lookup_user(conn: &duckdb::Connection, identifier: &str) -> Result<Option<UserRow>, String> {
     // Single query for both nickname and numeric-ID lookup. Avoids running a
     // query_row that returns QueryReturnedNoRows, which leaves DuckDB in a bad
     // connection state and causes a crash on the next operation.

@@ -6,8 +6,6 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { EntryType, ExpenseSubtype, FinancialEntry } from "@/types/financeiro";
 
-const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
-
 type Props = {
   entryType: EntryType;
   initial?: FinancialEntry | null;

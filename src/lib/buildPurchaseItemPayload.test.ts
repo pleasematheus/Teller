@@ -68,7 +68,7 @@ describe("buildPurchaseItemPayload — existing product", () => {
 
   it("applies unit_qty factor when showConversion is true", () => {
     const result = buildPurchaseItemPayload(
-      { ...baseExisting, showConversion: true, unitQty: "10", boxQty: "" },
+      { ...baseExisting, showConversion: true, unitQty: "10" },
       0,
       null,
     )
