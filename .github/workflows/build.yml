@@ -54,6 +54,8 @@ jobs:
     needs: [verify]
     runs-on: windows-latest
     environment: build-approval
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v6
