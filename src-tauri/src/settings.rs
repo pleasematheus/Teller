@@ -143,10 +143,10 @@ pub fn update_business_settings(
     if name.is_empty() {
         return Err("Nome da empresa não pode ser vazio".to_string());
     }
-    if investment_rate.map_or(false, |r| !(0.0..=1.0).contains(&r)) {
+    if investment_rate.is_some_and(|r| !(0.0..=1.0).contains(&r)) {
         return Err("Taxa de investimento deve estar entre 0% e 100%".to_string());
     }
-    if profit_margin.map_or(false, |r| !(0.0..=1.0).contains(&r)) {
+    if profit_margin.is_some_and(|r| !(0.0..=1.0).contains(&r)) {
         return Err("Margem de lucro deve estar entre 0% e 100%".to_string());
     }
 
@@ -163,7 +163,7 @@ pub fn update_business_settings(
     conn.execute(
         r#"UPDATE "Business_Settings"
            SET name = ?, investment_rate = ?, profit_margin = ?, updated_at = CURRENT_TIMESTAMP"#,
-        &[&name as &dyn duckdb::types::ToSql, ir, pm],
+        [&name as &dyn duckdb::types::ToSql, ir, pm],
     )
     .map_err(|e| e.to_string())?;
 

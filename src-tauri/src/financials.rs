@@ -109,6 +109,7 @@ pub fn list_recurring_suggestions(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn create_financial_entry(
     name: String,
     category: String,
@@ -160,6 +161,7 @@ pub fn create_financial_entry(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn update_financial_entry(
     id: i64,
     name: String,

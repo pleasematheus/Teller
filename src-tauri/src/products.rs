@@ -334,6 +334,7 @@ pub(crate) fn create_product_in_tx(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn create_product(
     name: String,
     description: Option<String>,
@@ -364,6 +365,7 @@ pub fn create_product(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn update_product(
     id: i64,
     name: String,
