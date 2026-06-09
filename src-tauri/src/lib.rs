@@ -60,7 +60,7 @@ pub fn run() {
             if db_path.starts_with(&data_dir) {
                 std::fs::create_dir_all(&data_dir)?;
             }
-            let io_err = |e: String| std::io::Error::new(std::io::ErrorKind::Other, e);
+            let io_err = |e: String| std::io::Error::other(e);
             let conn = open_database(&db_path)
                 .map_err(|e| io_err(e.to_string()))?;
             init_schema(&conn).map_err(&io_err)?;

@@ -136,8 +136,8 @@ pub fn create_business_settings(
     if name.is_empty() {
         return Err("Nome da empresa é obrigatório".to_string());
     }
-    if investment_rate.map_or(false, |r| !(0.0..=1.0).contains(&r))
-        || profit_margin.map_or(false, |r| !(0.0..=1.0).contains(&r))
+    if investment_rate.is_some_and(|r| !(0.0..=1.0).contains(&r))
+        || profit_margin.is_some_and(|r| !(0.0..=1.0).contains(&r))
     {
         return Err("Taxas devem estar entre 0% e 100%".to_string());
     }
@@ -155,7 +155,7 @@ pub fn create_business_settings(
     conn.execute(
         r#"INSERT INTO "Business_Settings" (name, investment_rate, profit_margin, updated_at, created_at)
            VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
-        &[&name as &dyn duckdb::types::ToSql, ir, pm],
+        [&name as &dyn duckdb::types::ToSql, ir, pm],
     )
     .map_err(|e| e.to_string())?;
 
