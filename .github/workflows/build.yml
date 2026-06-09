@@ -77,20 +77,20 @@ jobs:
         run: bun run tauri build
 
       - name: Upload NSIS installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: teller-nsis
           path: src-tauri/target/release/bundle/nsis/*.exe
 
       - name: Upload MSI installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: teller-msi
           path: src-tauri/target/release/bundle/msi/*.msi
 
       - name: Create GitHub Release
         if: ${{ inputs.create_release == true }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag_name }}
           files: |
