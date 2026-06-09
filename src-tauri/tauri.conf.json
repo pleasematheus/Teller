@@ -24,8 +24,8 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
-    "publisher": "Matheus Fracalossi",
-    "copyright": "Copyright 2026 Matheus Fracalossi",
+    "publisher": "Teller",
+    "copyright": "Copyright 2026 Teller",
     "homepage": "https://github.com/pleasematheus/Teller",
     "icon": [
       "icons/32x32.png",
