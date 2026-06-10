@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowUp01Icon, ArrowDown01Icon } from "@hugeicons/core-free-icons"
 import { Button } from "@/components/ui/button"
@@ -71,8 +71,8 @@ export function StockBalance({ onAdjust }: Props) {
     setLoading(true)
     try {
       const [stockData, productsData] = await Promise.all([
-        invoke<StockItem[]>("list_stock"),
-        invoke<Product[]>("list_products"),
+        authedInvoke<StockItem[]>("list_stock"),
+        authedInvoke<Product[]>("list_products"),
       ])
       setStock(stockData)
 
@@ -81,7 +81,7 @@ export function StockBalance({ onAdjust }: Props) {
 
       const entries = await Promise.all(
         sellable.map((p) =>
-          invoke<ProductComponent[]>("list_product_components", {
+          authedInvoke<ProductComponent[]>("list_product_components", {
             productId: p.id,
           }).then((c) => [p.id, c] as [number, ProductComponent[]]),
         ),

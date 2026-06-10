@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -34,7 +34,7 @@ export function Setup({ onComplete }: Props) {
     setError(null);
 
     try {
-      await invoke("create_user", {
+      await authedInvoke("create_user", {
         name: form.name,
         nickname: form.nickname,
         password: form.password,

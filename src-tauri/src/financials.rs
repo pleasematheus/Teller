@@ -2,6 +2,7 @@ use duckdb::params;
 use serde::Serialize;
 use tauri::State;
 
+use crate::auth::{require_session, SessionState};
 use crate::db::DbState;
 
 #[derive(Serialize)]
@@ -21,8 +22,11 @@ pub struct FinancialEntry {
 pub fn list_financial_entries(
     month: String,
     entry_type: String,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<FinancialEntry>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -63,8 +67,11 @@ pub fn list_financial_entries(
 pub fn list_recurring_suggestions(
     month: String,
     entry_type: String,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<FinancialEntry>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     // Entries marked recurring from past months not yet registered in target month
@@ -119,8 +126,11 @@ pub fn create_financial_entry(
     is_recurring: bool,
     reference_date: String,
     expense_subtype: Option<String>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let name = name.trim().to_string();
     let category = category.trim().to_string();
     let reference_date = reference_date.trim().to_string();
@@ -171,8 +181,11 @@ pub fn update_financial_entry(
     is_recurring: bool,
     reference_date: String,
     expense_subtype: Option<String>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let name = name.trim().to_string();
     let category = category.trim().to_string();
     let reference_date = reference_date.trim().to_string();
@@ -216,7 +229,13 @@ pub fn update_financial_entry(
 }
 
 #[tauri::command]
-pub fn delete_financial_entry(id: i64, state: State<DbState>) -> Result<(), String> {
+pub fn delete_financial_entry(
+    id: i64,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let rows = conn
         .execute(
@@ -368,6 +387,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(suggestion_count, 1);
+    }
+
+    #[test]
+    fn commands_reject_invalid_session() {
+        use crate::auth::require_session_with;
+        let session: Option<crate::auth::Session> = None;
+        let err = require_session_with(&session, "bad-token").unwrap_err();
+        assert_eq!(err, "Sessão inválida");
     }
 
     #[test]

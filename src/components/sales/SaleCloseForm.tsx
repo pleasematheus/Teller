@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { Input } from "@/components/ui/input"
@@ -62,7 +62,7 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    invoke<SaleItem[]>("get_sale_items", { saleId: sale.id })
+    authedInvoke<SaleItem[]>("get_sale_items", { saleId: sale.id })
       .then((rows) => {
         setCartItems(
           rows.map((row) => {
@@ -83,7 +83,7 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
   }, [sale.id, products])
 
   useEffect(() => {
-    invoke<StockItem[]>("list_stock")
+    authedInvoke<StockItem[]>("list_stock")
       .then((items) => {
         const map: Record<number, number> = {}
         for (const item of items) map[item.product_id] = item.current_quantity
@@ -93,7 +93,7 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
   }, [])
 
   useEffect(() => {
-    invoke<PaymentMethod[]>("list_payment_methods")
+    authedInvoke<PaymentMethod[]>("list_payment_methods")
       .then((ms) => {
         const active = ms.filter((m) => m.active)
         setMethods(active)
@@ -190,7 +190,7 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
         amount_paid: parseFloat(p.amount) || 0,
         installments: p.installments,
       }))
-      const stockWarnings = await invoke<string[]>("close_sale", {
+      const stockWarnings = await authedInvoke<string[]>("close_sale", {
         id: sale.id,
         items,
         payments: paymentInputs,

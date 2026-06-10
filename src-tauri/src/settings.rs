@@ -1,9 +1,10 @@
-use bcrypt::{hash, DEFAULT_COST};
+use bcrypt::{hash, verify, DEFAULT_COST};
 use duckdb::params;
 use serde::Serialize;
 use std::collections::HashMap;
 use tauri::State;
 
+use crate::auth::{require_session, SessionState};
 use crate::db::DbState;
 
 #[derive(Serialize)]
@@ -48,7 +49,12 @@ pub struct UserInfo {
 }
 
 #[tauri::command]
-pub fn list_payment_methods(state: State<DbState>) -> Result<Vec<PaymentMethod>, String> {
+pub fn list_payment_methods(
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<Vec<PaymentMethod>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut method_stmt = conn
@@ -113,7 +119,12 @@ pub fn list_payment_methods(state: State<DbState>) -> Result<Vec<PaymentMethod>,
 }
 
 #[tauri::command]
-pub fn get_business_info(state: State<DbState>) -> Result<BusinessInfo, String> {
+pub fn get_business_info(
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<BusinessInfo, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let info = conn
         .query_row(
@@ -136,8 +147,11 @@ pub fn update_business_settings(
     name: String,
     investment_rate: Option<f64>,
     profit_margin: Option<f64>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let name = name.trim().to_string();
 
     if name.is_empty() {
@@ -171,7 +185,12 @@ pub fn update_business_settings(
 }
 
 #[tauri::command]
-pub fn list_users(state: State<DbState>) -> Result<Vec<UserInfo>, String> {
+pub fn list_users(
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<Vec<UserInfo>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -198,15 +217,32 @@ pub fn list_users(state: State<DbState>) -> Result<Vec<UserInfo>, String> {
 pub fn change_user_password(
     user_id: i64,
     password: String,
-    state: State<DbState>,
+    current_password: String,
+    session_token: String,
+    db: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    let caller = require_session(&session, &session_token)?;
     let password = password.trim().to_string();
     if password.is_empty() {
         return Err("Senha não pode ser vazia".to_string());
     }
 
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    let caller_hash: String = conn
+        .query_row(
+            r#"SELECT password_hash FROM "Users" WHERE id = ?"#,
+            params![caller.user_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| "Usuário da sessão não encontrado".to_string())?;
+
+    if !verify(current_password.trim(), &caller_hash).map_err(|e| e.to_string())? {
+        return Err("Senha atual incorreta".to_string());
+    }
+
     let password_hash = hash(&password, DEFAULT_COST).map_err(|e| e.to_string())?;
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
     let rows = conn
         .execute(
             r#"UPDATE "Users" SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
@@ -221,7 +257,14 @@ pub fn change_user_password(
 }
 
 #[tauri::command]
-pub fn toggle_user_active(user_id: i64, active: bool, state: State<DbState>) -> Result<(), String> {
+pub fn toggle_user_active(
+    user_id: i64,
+    active: bool,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     if !active {
@@ -252,7 +295,13 @@ pub fn toggle_user_active(user_id: i64, active: bool, state: State<DbState>) -> 
 }
 
 #[tauri::command]
-pub fn create_payment_method(name: String, state: State<DbState>) -> Result<(), String> {
+pub fn create_payment_method(
+    name: String,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("Nome é obrigatório".to_string());
@@ -270,7 +319,14 @@ pub fn create_payment_method(name: String, state: State<DbState>) -> Result<(), 
 }
 
 #[tauri::command]
-pub fn update_payment_method(id: i64, active: bool, state: State<DbState>) -> Result<(), String> {
+pub fn update_payment_method(
+    id: i64,
+    active: bool,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let rows = conn
         .execute(
@@ -286,7 +342,14 @@ pub fn update_payment_method(id: i64, active: bool, state: State<DbState>) -> Re
 }
 
 #[tauri::command]
-pub fn rename_payment_method(id: i64, name: String, state: State<DbState>) -> Result<(), String> {
+pub fn rename_payment_method(
+    id: i64,
+    name: String,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("Nome é obrigatório".to_string());
@@ -307,7 +370,13 @@ pub fn rename_payment_method(id: i64, name: String, state: State<DbState>) -> Re
 }
 
 #[tauri::command]
-pub fn delete_payment_method(id: i64, state: State<DbState>) -> Result<(), String> {
+pub fn delete_payment_method(
+    id: i64,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let linked: i64 = conn
@@ -345,8 +414,11 @@ pub fn delete_payment_method(id: i64, state: State<DbState>) -> Result<(), Strin
 #[tauri::command]
 pub fn list_transaction_fees(
     payment_method_id: i64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<TransactionFee>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -378,13 +450,17 @@ pub fn list_transaction_fees(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_transaction_fee(
     payment_method_id: i64,
     installments: i64,
     fee_percent: f64,
     fixed_fee: f64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     if installments < 1 {
         return Err("Número de parcelas deve ser >= 1".to_string());
     }
@@ -425,7 +501,12 @@ pub fn upsert_transaction_fee(
 }
 
 #[tauri::command]
-pub fn list_units_of_measure(state: State<DbState>) -> Result<Vec<UnitOfMeasure>, String> {
+pub fn list_units_of_measure(
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<Vec<UnitOfMeasure>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare(
@@ -453,12 +534,16 @@ pub fn list_units_of_measure(state: State<DbState>) -> Result<Vec<UnitOfMeasure>
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn create_unit_of_measure(
     name: String,
     abbreviation: String,
     integer: bool,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let name = name.trim().to_string();
     let abbreviation = abbreviation.trim().to_string();
     if name.is_empty() {
@@ -485,13 +570,17 @@ pub fn create_unit_of_measure(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn rename_unit_of_measure(
     id: i64,
     name: String,
     abbreviation: String,
     integer: bool,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let name = name.trim().to_string();
     let abbreviation = abbreviation.trim().to_string();
     if name.is_empty() {
@@ -543,7 +632,14 @@ pub fn rename_unit_of_measure(
 }
 
 #[tauri::command]
-pub fn update_unit_of_measure(id: i64, active: bool, state: State<DbState>) -> Result<(), String> {
+pub fn update_unit_of_measure(
+    id: i64,
+    active: bool,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let rows = conn
         .execute(
@@ -558,7 +654,13 @@ pub fn update_unit_of_measure(id: i64, active: bool, state: State<DbState>) -> R
 }
 
 #[tauri::command]
-pub fn delete_unit_of_measure(id: i64, state: State<DbState>) -> Result<(), String> {
+pub fn delete_unit_of_measure(
+    id: i64,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let name: String = conn
@@ -619,7 +721,13 @@ fn normalize_setting_value(key: &str, value: &str) -> String {
 }
 
 #[tauri::command]
-pub fn get_system_setting(key: String, state: State<DbState>) -> Result<String, String> {
+pub fn get_system_setting(
+    key: String,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<String, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let value: Option<String> = conn
         .query_row(
@@ -632,7 +740,14 @@ pub fn get_system_setting(key: String, state: State<DbState>) -> Result<String, 
 }
 
 #[tauri::command]
-pub fn set_system_setting(key: String, value: String, state: State<DbState>) -> Result<(), String> {
+pub fn set_system_setting(
+    key: String,
+    value: String,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let normalized = normalize_setting_value(&key, &value);
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
@@ -735,6 +850,36 @@ pub(crate) fn insert_transaction_fee(
 mod tests {
     use super::*;
     use crate::db::test_db;
+
+    // ── 3.2: change_user_password re-authentication ──────────────────────────────
+
+    #[test]
+    fn change_user_password_rejects_without_session() {
+        let result = crate::auth::require_session_with(&None, "");
+        assert_eq!(result.unwrap_err(), "Sessão inválida");
+    }
+
+    #[test]
+    fn change_user_password_rejects_wrong_current_password() {
+        let hash = bcrypt::hash("correct", DEFAULT_COST).unwrap();
+        assert!(!verify("wrong", &hash).unwrap());
+    }
+
+    #[test]
+    fn change_user_password_accepts_correct_current_password() {
+        let hash = bcrypt::hash("correct", DEFAULT_COST).unwrap();
+        assert!(verify("correct", &hash).unwrap());
+    }
+
+    // ── 4.7: Session rejection smoke test ────────────────────────────────────────
+
+    #[test]
+    fn commands_reject_invalid_session() {
+        let result = crate::auth::require_session_with(&None, "invalid-token");
+        assert_eq!(result.unwrap_err(), "Sessão inválida");
+    }
+
+    // ── Existing tests (preserved) ───────────────────────────────────────────────
 
     #[test]
     fn update_business_settings_rejects_empty_name() {

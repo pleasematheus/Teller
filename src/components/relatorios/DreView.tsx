@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Spinner } from "@/components/ui/spinner";
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
@@ -49,7 +49,7 @@ export function DreView({ onBack }: Props) {
     if (!range.from || !range.to) return;
     setLoading(true);
     try {
-      const result = await invoke<DreResult>("get_dre", {
+      const result = await authedInvoke<DreResult>("get_dre", {
         startDate: toIso(range.from),
         endDate: toIso(range.to),
       });

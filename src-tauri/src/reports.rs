@@ -2,6 +2,7 @@ use duckdb::params;
 use serde::Serialize;
 use tauri::State;
 
+use crate::auth::{require_session, SessionState};
 use crate::db::DbState;
 
 #[derive(Serialize)]
@@ -27,8 +28,11 @@ pub struct DreResult {
 pub fn get_dre(
     start_date: String,
     end_date: String,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<DreResult, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     compute_dre(&conn, &start_date, &end_date)
 }
@@ -328,6 +332,14 @@ mod tests {
         assert!((dre.lucro_operacional - 12.0).abs() < 1e-9);
         assert!((dre.ebit - 11.0).abs() < 1e-9);
         assert!((dre.lucro_liquido - 9.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn commands_reject_invalid_session() {
+        use crate::auth::require_session_with;
+        let session: Option<crate::auth::Session> = None;
+        let err = require_session_with(&session, "bad-token").unwrap_err();
+        assert_eq!(err, "Sessão inválida");
     }
 
     #[test]

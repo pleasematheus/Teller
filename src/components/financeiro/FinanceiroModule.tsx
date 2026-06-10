@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowLeftIcon, ArrowRightIcon } from "@hugeicons/core-free-icons";
 import { MonthPicker } from "./MonthPicker";
@@ -37,11 +37,11 @@ export function FinanceiroModule() {
 
   const loadEntries = useCallback(async () => {
     const [ents, sugs] = await Promise.all([
-      invoke<FinancialEntry[]>("list_financial_entries", {
+      authedInvoke<FinancialEntry[]>("list_financial_entries", {
         month,
         entryType,
       }).catch(() => []),
-      invoke<FinancialEntry[]>("list_recurring_suggestions", {
+      authedInvoke<FinancialEntry[]>("list_recurring_suggestions", {
         month,
         entryType,
       }).catch(() => []),

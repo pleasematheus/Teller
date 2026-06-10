@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
 import { parseSystemSettingBool } from "@/lib/systemSettings";
 
@@ -12,7 +12,7 @@ export function VendasSection() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<string>("get_system_setting", { key: KEY_NEGATIVE_STOCK })
+    authedInvoke<string>("get_system_setting", { key: KEY_NEGATIVE_STOCK })
       .then((value) => setAllowNegative(parseSystemSettingBool(value)))
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
@@ -25,7 +25,7 @@ export function VendasSection() {
     setError(null);
     setAllowNegative(newAllowNegative);
     try {
-      await invoke("set_system_setting", {
+      await authedInvoke("set_system_setting", {
         key: KEY_NEGATIVE_STOCK,
         value: newAllowNegative ? "true" : "false",
       });

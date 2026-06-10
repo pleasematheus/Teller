@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -48,7 +48,7 @@ export function StockAdjustmentForm({
 
     setSaving(true)
     try {
-      await invoke("create_stock_adjustment", {
+      await authedInvoke("create_stock_adjustment", {
         productId,
         quantity: finalQty,
         motive,

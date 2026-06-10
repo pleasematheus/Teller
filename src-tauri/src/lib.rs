@@ -69,6 +69,7 @@ pub fn run() {
             let conn = open_database(&db_path)
                 .map_err(|e| io_err(e.to_string()))?;
             app.manage(DbState(Mutex::new(conn)));
+            app.manage(auth::SessionState::new());
 
             let show_item = MenuItem::with_id(app, "show", "Abrir", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?;
@@ -118,6 +119,7 @@ pub fn run() {
             auth::create_business_settings,
             auth::find_user,
             auth::login,
+            auth::logout,
             auth::get_user_setting,
             auth::set_user_setting,
             products::get_pricing_rates,

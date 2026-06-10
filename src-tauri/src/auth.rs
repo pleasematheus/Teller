@@ -1,6 +1,7 @@
 use bcrypt::{hash, verify, DEFAULT_COST};
 use duckdb::params;
 use serde::Serialize;
+use std::sync::Mutex;
 use tauri::State;
 
 use crate::db::DbState;
@@ -10,6 +11,34 @@ pub struct User {
     pub id: i64,
     pub name: String,
     pub nickname: String,
+}
+
+#[derive(Serialize)]
+pub struct LoginResponse {
+    pub user: User,
+    pub session_token: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Session {
+    pub token: String,
+    pub user_id: i64,
+    #[allow(dead_code)]
+    pub nickname: String,
+}
+
+pub struct SessionState(Mutex<Option<Session>>);
+
+impl SessionState {
+    pub fn new() -> Self {
+        SessionState(Mutex::new(None))
+    }
+}
+
+impl Default for SessionState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub(crate) struct UserRow {
@@ -58,6 +87,27 @@ pub(crate) fn lookup_user(
     }
 }
 
+pub(crate) fn generate_token() -> String {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).expect("system RNG failed");
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+pub(crate) fn require_session_with(
+    guard: &Option<Session>,
+    token: &str,
+) -> Result<Session, String> {
+    match guard {
+        Some(s) if !token.is_empty() && s.token == token => Ok(s.clone()),
+        _ => Err("Sessão inválida".to_string()),
+    }
+}
+
+pub(crate) fn require_session(state: &State<SessionState>, token: &str) -> Result<Session, String> {
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    require_session_with(&guard, token)
+}
+
 #[tauri::command]
 pub fn check_setup(state: State<DbState>) -> Result<bool, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
@@ -77,7 +127,9 @@ pub fn create_user(
     name: String,
     nickname: String,
     password: String,
-    state: State<DbState>,
+    session_token: String,
+    db: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
     let nickname = nickname.trim().to_string();
@@ -87,7 +139,24 @@ pub fn create_user(
         return Err("Todos os campos são obrigatórios".to_string());
     }
 
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    // Check bootstrap without holding the lock for the rest of the function
+    // to keep DbState and SessionState lock ordering consistent (SessionState
+    // must never be held while acquiring DbState).
+    let active_count: i64 = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            r#"SELECT COUNT(*) FROM "Users" WHERE active = true"#,
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?
+    };
+
+    if active_count > 0 {
+        require_session(&session, &session_token)?;
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
 
     let count: i64 = conn
         .query_row(
@@ -129,7 +198,9 @@ pub fn create_business_settings(
     name: String,
     investment_rate: Option<f64>,
     profit_margin: Option<f64>,
-    state: State<DbState>,
+    session_token: String,
+    db: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
 
@@ -142,7 +213,19 @@ pub fn create_business_settings(
         return Err("Taxas devem estar entre 0% e 100%".to_string());
     }
 
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let existing_count: i64 = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        conn.query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |row| {
+            row.get(0)
+        })
+        .map_err(|e| e.to_string())?
+    };
+
+    if existing_count > 0 {
+        require_session(&session, &session_token)?;
+    }
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
     // Columns are DOUBLE (not DECIMAL): Option<f64> binds and reads correctly via params!.
     let ir: &dyn duckdb::types::ToSql = match &investment_rate {
         Some(v) => v,
@@ -169,11 +252,16 @@ pub fn find_user(identifier: String, state: State<DbState>) -> Result<Option<Str
 }
 
 #[tauri::command]
-pub fn login(identifier: String, password: String, state: State<DbState>) -> Result<User, String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-
-    let row = lookup_user(&conn, identifier.trim())?
-        .ok_or_else(|| "Credenciais inválidas".to_string())?;
+pub fn login(
+    identifier: String,
+    password: String,
+    db: State<DbState>,
+    session: State<SessionState>,
+) -> Result<LoginResponse, String> {
+    let row = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        lookup_user(&conn, identifier.trim())?.ok_or_else(|| "Credenciais inválidas".to_string())?
+    };
 
     if !row.active {
         return Err("Conta inativa".to_string());
@@ -184,20 +272,41 @@ pub fn login(identifier: String, password: String, state: State<DbState>) -> Res
         return Err("Credenciais inválidas".to_string());
     }
 
-    Ok(User {
-        id: row.id,
-        name: row.name,
-        nickname: row.nickname,
+    let token = generate_token();
+    let mut sess = session.0.lock().map_err(|e| e.to_string())?;
+    *sess = Some(Session {
+        token: token.clone(),
+        user_id: row.id,
+        nickname: row.nickname.clone(),
+    });
+
+    Ok(LoginResponse {
+        user: User {
+            id: row.id,
+            name: row.name,
+            nickname: row.nickname,
+        },
+        session_token: token,
     })
+}
+
+#[tauri::command]
+pub fn logout(session: State<SessionState>) -> Result<(), String> {
+    let mut sess = session.0.lock().map_err(|e| e.to_string())?;
+    *sess = None;
+    Ok(())
 }
 
 #[tauri::command]
 pub fn get_user_setting(
     user_id: i64,
     key: String,
-    state: State<DbState>,
+    session_token: String,
+    db: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Option<String>, String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    require_session(&session, &session_token)?;
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare(r#"SELECT value FROM "User_Settings" WHERE user_id = ? AND key = ?"#)
         .map_err(|e| e.to_string())?;
@@ -216,9 +325,12 @@ pub fn set_user_setting(
     user_id: i64,
     key: String,
     value: String,
-    state: State<DbState>,
+    session_token: String,
+    db: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    require_session(&session, &session_token)?;
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
         r#"INSERT INTO "User_Settings" (user_id, key, value)
            VALUES (?, ?, ?)
@@ -252,6 +364,188 @@ mod tests {
     use super::*;
     use crate::db::test_db;
     use crate::products::insert_business_settings;
+
+    // ── 1.4: Session infrastructure ─────────────────────────────────────────────
+
+    #[test]
+    fn generate_token_is_not_empty() {
+        assert!(!generate_token().is_empty());
+    }
+
+    #[test]
+    fn generate_token_is_64_hex_chars() {
+        let token = generate_token();
+        assert_eq!(token.len(), 64);
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn generate_token_produces_distinct_tokens() {
+        assert_ne!(generate_token(), generate_token());
+    }
+
+    #[test]
+    fn require_session_with_accepts_correct_token() {
+        let sess = Some(Session {
+            token: "token123".into(),
+            user_id: 1,
+            nickname: "x".into(),
+        });
+        let result = require_session_with(&sess, "token123");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().user_id, 1);
+    }
+
+    #[test]
+    fn require_session_with_rejects_empty_token() {
+        let sess = Some(Session {
+            token: "token123".into(),
+            user_id: 1,
+            nickname: "x".into(),
+        });
+        assert_eq!(
+            require_session_with(&sess, "").unwrap_err(),
+            "Sessão inválida"
+        );
+    }
+
+    #[test]
+    fn require_session_with_rejects_wrong_token() {
+        let sess = Some(Session {
+            token: "correct".into(),
+            user_id: 1,
+            nickname: "x".into(),
+        });
+        assert_eq!(
+            require_session_with(&sess, "wrong").unwrap_err(),
+            "Sessão inválida"
+        );
+    }
+
+    #[test]
+    fn require_session_with_rejects_no_session() {
+        assert_eq!(
+            require_session_with(&None, "anytoken").unwrap_err(),
+            "Sessão inválida"
+        );
+    }
+
+    #[test]
+    fn new_session_replaces_old_token() {
+        let old = "old_token".to_string();
+        let mut sess: Option<Session> = Some(Session {
+            token: old.clone(),
+            user_id: 1,
+            nickname: "x".into(),
+        });
+        assert!(require_session_with(&sess, &old).is_ok());
+
+        let new_token = generate_token();
+        sess = Some(Session {
+            token: new_token.clone(),
+            user_id: 1,
+            nickname: "x".into(),
+        });
+        assert_eq!(
+            require_session_with(&sess, &old).unwrap_err(),
+            "Sessão inválida"
+        );
+        assert!(require_session_with(&sess, &new_token).is_ok());
+    }
+
+    // ── 2.6: Auth command scenarios ──────────────────────────────────────────────
+
+    #[test]
+    fn login_verifies_password_correctly() {
+        let conn = test_db();
+        insert_user(&conn, "Alice", "alice", true);
+        let row = lookup_user(&conn, "alice").unwrap().unwrap();
+        assert!(verify("senha123", &row.password_hash).unwrap());
+    }
+
+    #[test]
+    fn login_rejects_wrong_password() {
+        let conn = test_db();
+        insert_user(&conn, "Alice", "alice", true);
+        let row = lookup_user(&conn, "alice").unwrap().unwrap();
+        assert!(!verify("errada", &row.password_hash).unwrap());
+    }
+
+    #[test]
+    fn logout_invalidates_session() {
+        let token = "session-token".to_string();
+        let sess: Option<Session> = Some(Session {
+            token: token.clone(),
+            user_id: 1,
+            nickname: "x".into(),
+        });
+        assert!(require_session_with(&sess, &token).is_ok());
+        let after_logout: Option<Session> = None;
+        assert_eq!(
+            require_session_with(&after_logout, &token).unwrap_err(),
+            "Sessão inválida"
+        );
+    }
+
+    #[test]
+    fn create_user_allowed_without_session_during_bootstrap() {
+        let conn = test_db();
+        let active_count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Users" WHERE active = true"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_count, 0);
+    }
+
+    #[test]
+    fn create_user_requires_session_when_active_users_exist() {
+        let conn = test_db();
+        insert_user(&conn, "Existing", "existing", true);
+        let active_count: i64 = conn
+            .query_row(
+                r#"SELECT COUNT(*) FROM "Users" WHERE active = true"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(active_count > 0);
+        assert_eq!(
+            require_session_with(&None, "").unwrap_err(),
+            "Sessão inválida"
+        );
+    }
+
+    #[test]
+    fn create_business_settings_allowed_without_session_during_bootstrap() {
+        let conn = test_db();
+        let count: i64 = conn
+            .query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn create_business_settings_requires_session_when_record_exists() {
+        let conn = test_db();
+        insert_business_settings(&conn, "Empresa");
+        let count: i64 = conn
+            .query_row(r#"SELECT COUNT(*) FROM "Business_Settings""#, [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(count > 0);
+        assert_eq!(
+            require_session_with(&None, "").unwrap_err(),
+            "Sessão inválida"
+        );
+    }
+
+    // ── Existing tests (preserved) ───────────────────────────────────────────────
 
     #[test]
     fn check_setup_empty_db_returns_false() {

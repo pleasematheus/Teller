@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { Spinner } from "@/components/ui/spinner"
 import type { Sale, SaleItem, SalePaymentRow } from "@/types/sale"
 
@@ -18,8 +18,8 @@ export function SaleDetail({ sale }: Props) {
 
   useEffect(() => {
     Promise.all([
-      invoke<SaleItem[]>("get_sale_items", { saleId: sale.id }),
-      invoke<SalePaymentRow[]>("get_sale_payments", { saleId: sale.id }),
+      authedInvoke<SaleItem[]>("get_sale_items", { saleId: sale.id }),
+      authedInvoke<SalePaymentRow[]>("get_sale_payments", { saleId: sale.id }),
     ])
       .then(([i, p]) => {
         setItems(i)

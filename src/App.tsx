@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke, clearSessionToken } from "@/lib/api";
 import "./App.css";
 import { Setup } from "./components/Setup";
 import { Login } from "./components/Login";
@@ -21,7 +21,7 @@ function App() {
     return (
       <SplashScreen
         onFinished={async () => {
-          const hasUsers = await invoke<boolean>("check_setup").catch(() => false);
+          const hasUsers = await authedInvoke<boolean>("check_setup").catch(() => false);
           setScreen(hasUsers ? "login" : "setup");
         }}
       />
@@ -36,7 +36,7 @@ function App() {
     return (
       <Login
         onSuccess={async (u) => {
-          const saved = await invoke<string | null>("get_user_setting", {
+          const saved = await authedInvoke<string | null>("get_user_setting", {
             userId: u.id,
             key: "theme",
           }).catch(() => null);
@@ -45,7 +45,7 @@ function App() {
             window.matchMedia("(prefers-color-scheme: dark)").matches
           );
           setUser(u);
-          const hasCompany = await invoke<boolean>("check_business_setup").catch(() => true);
+          const hasCompany = await authedInvoke<boolean>("check_business_setup").catch(() => true);
           setScreen(hasCompany ? "dashboard" : "company-setup");
         }}
       />
@@ -64,7 +64,9 @@ function App() {
   return (
     <Dashboard
       user={user!}
-      onLogout={() => {
+      onLogout={async () => {
+        await authedInvoke("logout").catch(() => {});
+        clearSessionToken();
         setUser(null);
         setScreen("login");
       }}

@@ -25,4 +25,5 @@ serde_json = "1"
 duckdb = { version = "1.4.4", features = ["bundled"] }
 bcrypt = "0.15"
 dotenvy = "0.15"
+getrandom = "0.2"
 
