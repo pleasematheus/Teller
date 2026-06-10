@@ -23,7 +23,7 @@
 - In Rust, prefer functions that return Result<T, E> over implicit mutations; avoid shared mutable state.
 
 ## Tests
-- Every utility in src/lib/ has a corresponding *.test.ts (Vitest).
+- Every utility in src/lib/ has a corresponding *.test.ts (Vitest) under tests/lib/, importing the module via the `@/lib/` alias.
 - Every Tauri Rust command has at least one unit test in the same file (#[cfg(test)]).
 - Test behavior, not implementation.
 - Use the #### Scenario: blocks from OpenSpec specs as test case references.

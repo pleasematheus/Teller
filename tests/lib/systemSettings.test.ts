@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSystemSettingBool } from "./systemSettings";
+import { parseSystemSettingBool } from "@/lib/systemSettings";
 
 describe("parseSystemSettingBool", () => {
   it("returns true for 'true'", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { matchesByName, rankByName, sortBy } from "./listSearch"
+import { matchesByName, rankByName, sortBy } from "@/lib/listSearch"
 
 function item(name: string) {
   return { name }

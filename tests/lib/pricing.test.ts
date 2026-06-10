@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { computePrice, computeMaxDiscount, applyGlobalDiscount, computeMarginFromPrice, computeCmvFromComponents, itemDiscountFraction, computePricingBreakdown } from "./pricing"
+import { computePrice, computeMaxDiscount, applyGlobalDiscount, computeMarginFromPrice, computeCmvFromComponents, itemDiscountFraction, computePricingBreakdown } from "@/lib/pricing"
 import type { PricingRates } from "@/types/product"
 
 const zeroRates: PricingRates = {

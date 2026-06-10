@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBRL } from "./format";
+import { formatBRL } from "@/lib/format";
 
 // Normaliza espaços (pt-BR usa NBSP entre o símbolo e o número)
 const norm = (s: string) => s.replace(/\s/g, " ");

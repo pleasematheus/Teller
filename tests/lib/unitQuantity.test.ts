@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isUnitInteger, validateQuantity, normalizeQuantity } from "./unitQuantity";
+import { isUnitInteger, validateQuantity, normalizeQuantity } from "@/lib/unitQuantity";
 import type { UnitOfMeasure } from "@/types/units";
 
 const units: UnitOfMeasure[] = [
