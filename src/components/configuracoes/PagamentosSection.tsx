@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Spinner } from "@/components/ui/spinner";
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
@@ -61,7 +61,7 @@ export function PagamentosSection() {
   const [deleting, setDeleting] = useState(false);
 
   const loadMethods = useCallback(() => {
-    invoke<PaymentMethod[]>("list_payment_methods")
+    authedInvoke<PaymentMethod[]>("list_payment_methods")
       .then(setMethods)
       .finally(() => setLoadingMethods(false));
   }, []);
@@ -72,7 +72,7 @@ export function PagamentosSection() {
 
   const handleToggle = async (method: PaymentMethod) => {
     try {
-      await invoke("update_payment_method", { id: method.id, active: !method.active });
+      await authedInvoke("update_payment_method", { id: method.id, active: !method.active });
       setMethods((prev) =>
         prev.map((m) => (m.id === method.id ? { ...m, active: !m.active } : m))
       );
@@ -91,7 +91,7 @@ export function PagamentosSection() {
     setLoadingFees(true);
     setView("form-edit");
     try {
-      const fees = await invoke<TransactionFee[]>("list_transaction_fees", {
+      const fees = await authedInvoke<TransactionFee[]>("list_transaction_fees", {
         paymentMethodId: method.id,
       });
       setFeesEnabled(fees.length > 0);
@@ -145,11 +145,11 @@ export function PagamentosSection() {
     setEditNameError(null);
     try {
       if (trimmedName !== editingMethod.name) {
-        await invoke("rename_payment_method", { id: editingMethod.id, name: trimmedName });
+        await authedInvoke("rename_payment_method", { id: editingMethod.id, name: trimmedName });
       }
       if (feesEnabled) {
         for (const row of feeRows) {
-          await invoke("upsert_transaction_fee", {
+          await authedInvoke("upsert_transaction_fee", {
             paymentMethodId: editingMethod.id,
             installments: parseInt(row.installments, 10),
             feePercent: parseFloat(row.fee_percent || "0") / 100,
@@ -177,7 +177,7 @@ export function PagamentosSection() {
     setDeleting(true);
     setDeleteError(null);
     try {
-      await invoke("delete_payment_method", { id: editingMethod.id });
+      await authedInvoke("delete_payment_method", { id: editingMethod.id });
       setView("list");
       setEditingMethod(null);
       loadMethods();
@@ -196,7 +196,7 @@ export function PagamentosSection() {
     setSavingNew(true);
     setNewNameError(null);
     try {
-      await invoke("create_payment_method", { name });
+      await authedInvoke("create_payment_method", { name });
       setNewName("");
       setView("list");
       loadMethods();

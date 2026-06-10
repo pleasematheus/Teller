@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { StockBalance } from "./StockBalance"
 import { MovementHistory } from "./MovementHistory"
 import { StockAdjustmentForm } from "./StockAdjustmentForm"
@@ -25,7 +25,7 @@ export function StockModule() {
   const [products, setProducts] = useState<Product[]>([])
 
   const loadProducts = useCallback(async () => {
-    const list = await invoke<Product[]>("list_products")
+    const list = await authedInvoke<Product[]>("list_products")
     setProducts(list)
   }, [])
 

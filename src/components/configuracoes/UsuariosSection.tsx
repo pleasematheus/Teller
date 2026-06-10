@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Spinner } from "@/components/ui/spinner";
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
@@ -38,12 +38,13 @@ export function UsuariosSection({ user }: Props) {
   const [newError, setNewError] = useState<string | null>(null);
 
   // Change password form state
+  const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [savingPw, setSavingPw] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
 
   const loadUsers = useCallback(() => {
-    invoke<UserInfo[]>("list_users")
+    authedInvoke<UserInfo[]>("list_users")
       .then(setUsers)
       .finally(() => setLoading(false));
   }, []);
@@ -55,7 +56,7 @@ export function UsuariosSection({ user }: Props) {
   const handleToggleActive = async (u: UserInfo) => {
     setError(null);
     try {
-      await invoke("toggle_user_active", { userId: u.id, active: !u.active });
+      await authedInvoke("toggle_user_active", { userId: u.id, active: !u.active });
       setUsers((prev) =>
         prev.map((x) => (x.id === u.id ? { ...x, active: !x.active } : x))
       );
@@ -66,6 +67,7 @@ export function UsuariosSection({ user }: Props) {
 
   const handleOpenChangePassword = (u: UserInfo) => {
     setPasswordTarget(u);
+    setCurrentPw("");
     setNewPw("");
     setPwError(null);
     setView("form-password");
@@ -76,7 +78,7 @@ export function UsuariosSection({ user }: Props) {
     setSavingNew(true);
     setNewError(null);
     try {
-      await invoke("create_user", {
+      await authedInvoke("create_user", {
         name: newName.trim(),
         nickname: newNickname.trim(),
         password: newPassword,
@@ -96,9 +98,10 @@ export function UsuariosSection({ user }: Props) {
     setSavingPw(true);
     setPwError(null);
     try {
-      await invoke("change_user_password", {
+      await authedInvoke("change_user_password", {
         userId: passwordTarget.id,
         password: newPw,
+        currentPassword: currentPw,
       });
       setView("list");
       setPasswordTarget(null);
@@ -264,9 +267,20 @@ export function UsuariosSection({ user }: Props) {
       </p>
       <form onSubmit={handleChangePassword} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
-          <label className="text-teller-secondary text-xs font-medium">Nova senha</label>
+          <label className="text-teller-secondary text-xs font-medium">Senha atual</label>
           <Input
             autoFocus
+            type="password"
+            value={currentPw}
+            onChange={(e) => { setCurrentPw(e.target.value); setPwError(null); }}
+            placeholder="••••••••"
+            disabled={savingPw}
+            className={inputClass}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-teller-secondary text-xs font-medium">Nova senha</label>
+          <Input
             type="password"
             value={newPw}
             onChange={(e) => { setNewPw(e.target.value); setPwError(null); }}

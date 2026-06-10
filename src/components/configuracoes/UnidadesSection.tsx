@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Spinner } from "@/components/ui/spinner";
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
@@ -37,7 +37,7 @@ export function UnidadesSection() {
   const [deleting, setDeleting] = useState(false);
 
   const loadUnits = useCallback(() => {
-    invoke<UnitOfMeasure[]>("list_units_of_measure")
+    authedInvoke<UnitOfMeasure[]>("list_units_of_measure")
       .then(setUnits)
       .finally(() => setLoadingUnits(false));
   }, []);
@@ -48,7 +48,7 @@ export function UnidadesSection() {
 
   const handleToggle = async (unit: UnitOfMeasure) => {
     try {
-      await invoke("update_unit_of_measure", { id: unit.id, active: !unit.active });
+      await authedInvoke("update_unit_of_measure", { id: unit.id, active: !unit.active });
       setUnits((prev) =>
         prev.map((u) => (u.id === unit.id ? { ...u, active: !u.active } : u))
       );
@@ -77,7 +77,7 @@ export function UnidadesSection() {
     setSavingNew(true);
     setNewNameError(null);
     try {
-      await invoke("create_unit_of_measure", { name, abbreviation, integer: newInteger });
+      await authedInvoke("create_unit_of_measure", { name, abbreviation, integer: newInteger });
       setNewName("");
       setNewAbbreviation("");
       setNewInteger(true);
@@ -99,7 +99,7 @@ export function UnidadesSection() {
     setSavingEdit(true);
     setEditNameError(null);
     try {
-      await invoke("rename_unit_of_measure", { id: editingUnit.id, name, abbreviation, integer: editInteger });
+      await authedInvoke("rename_unit_of_measure", { id: editingUnit.id, name, abbreviation, integer: editInteger });
       setView("list");
       setEditingUnit(null);
       loadUnits();
@@ -115,7 +115,7 @@ export function UnidadesSection() {
     setDeleting(true);
     setDeleteError(null);
     try {
-      await invoke("delete_unit_of_measure", { id: editingUnit.id });
+      await authedInvoke("delete_unit_of_measure", { id: editingUnit.id });
       setView("list");
       setEditingUnit(null);
       loadUnits();

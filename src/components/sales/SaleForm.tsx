@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -37,7 +37,7 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    invoke<UnitOfMeasure[]>("list_units_of_measure").then(setUnits).catch(console.error)
+    authedInvoke<UnitOfMeasure[]>("list_units_of_measure").then(setUnits).catch(console.error)
   }, [])
 
   const sellableProducts = useMemo(
@@ -54,7 +54,7 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
 
   useEffect(() => {
     if (sale) {
-      invoke<SaleItem[]>("get_sale_items", { saleId: sale.id })
+      authedInvoke<SaleItem[]>("get_sale_items", { saleId: sale.id })
         .then((rows) => {
           setItems(
             rows.map((row) => ({
@@ -148,9 +148,9 @@ export function SaleForm({ sale, products, onCancel, onSaved }: Props) {
     }))
     try {
       if (isEdit) {
-        await invoke("update_sale", { id: sale.id, label, items: payload })
+        await authedInvoke("update_sale", { id: sale.id, label, items: payload })
       } else {
-        await invoke("create_sale", { label, userId: 1, items: payload })
+        await authedInvoke("create_sale", { label, userId: 1, items: payload })
       }
       onSaved()
     } catch (err) {

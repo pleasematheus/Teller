@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -103,16 +103,16 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
   const [loadingDraft, setLoadingDraft] = useState(false)
 
   useEffect(() => {
-    invoke<Product[]>("list_products").then(setProducts).catch(console.error)
-    invoke<PricingRates>("get_pricing_rates").then(setRates).catch(console.error)
-    invoke<UnitOfMeasure[]>("list_units_of_measure").then(setUnits).catch(console.error)
+    authedInvoke<Product[]>("list_products").then(setProducts).catch(console.error)
+    authedInvoke<PricingRates>("get_pricing_rates").then(setRates).catch(console.error)
+    authedInvoke<UnitOfMeasure[]>("list_units_of_measure").then(setUnits).catch(console.error)
   }, [])
 
   useEffect(() => {
     if (!purchaseId) return
     setLoadingDraft(true)
     setError(null)
-    invoke<PurchaseDraft>("get_purchase_draft", { purchaseId })
+    authedInvoke<PurchaseDraft>("get_purchase_draft", { purchaseId })
       .then((draft) => {
         setFreight(String(draft.freight))
         setItems(
@@ -173,7 +173,7 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
       newProductName: "",
       finalPriceDirty: false,
     })
-    invoke<number>("get_product_loss_rate", { productId: product.id })
+    authedInvoke<number>("get_product_loss_rate", { productId: product.id })
       .then((rate) => update(targetId, { lossRatePct: String((rate * 100).toFixed(2)) }))
       .catch(() => {})
   }
@@ -235,9 +235,9 @@ export function PurchaseForm({ onSaved, purchaseId, onCancel }: Props) {
     setSaving(true)
     try {
       if (purchaseId) {
-        await invoke("update_purchase", { purchaseId, freight: freightVal, items: parsed })
+        await authedInvoke("update_purchase", { purchaseId, freight: freightVal, items: parsed })
       } else {
-        await invoke("create_purchase", { freight: freightVal, items: parsed })
+        await authedInvoke("create_purchase", { freight: freightVal, items: parsed })
         setItems([newItem()])
         setFreight("0")
       }

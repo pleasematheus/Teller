@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { Spinner } from "@/components/ui/spinner"
 import { computePricingBreakdown } from "@/lib/pricing"
 import type { Product, PricingRates, ProductSaleRow, ProductPurchaseRow } from "@/types/product"
@@ -53,9 +53,9 @@ export function ProductDetails({ product, rates }: Props) {
   useEffect(() => {
     setLoading(true)
     Promise.all([
-      invoke<ProductSaleRow[]>("get_product_sales_history", { productId: product.id }),
-      invoke<StockMovement[]>("list_stock_movements", { productId: product.id }),
-      invoke<ProductPurchaseRow[]>("list_product_purchases", { productId: product.id }),
+      authedInvoke<ProductSaleRow[]>("get_product_sales_history", { productId: product.id }),
+      authedInvoke<StockMovement[]>("list_stock_movements", { productId: product.id }),
+      authedInvoke<ProductPurchaseRow[]>("list_product_purchases", { productId: product.id }),
     ])
       .then(([sales, movements, purchases]) => setData({ sales, movements, purchases }))
       .catch(console.error)

@@ -2,6 +2,7 @@ use duckdb::{params, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::auth::{require_session, SessionState};
 use crate::db::DbState;
 use crate::products::compute_cmv_from_components;
 
@@ -38,7 +39,13 @@ pub struct SaleItemRow {
 }
 
 #[tauri::command]
-pub fn list_sales(status: String, state: State<DbState>) -> Result<Vec<SaleRow>, String> {
+pub fn list_sales(
+    status: String,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<Vec<SaleRow>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -133,8 +140,11 @@ pub fn create_sale(
     user_id: i64,
     label: String,
     items: Vec<SaleItemInput>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<i64, String> {
+    require_session(&session, &session_token)?;
     if items.is_empty() {
         return Err("A venda deve ter ao menos um item".to_string());
     }
@@ -164,8 +174,11 @@ pub fn update_sale(
     id: i64,
     label: String,
     items: Vec<SaleItemInput>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     if items.is_empty() {
         return Err("A venda deve ter ao menos um item".to_string());
     }
@@ -514,8 +527,11 @@ pub fn close_sale(
     id: i64,
     items: Vec<SaleItemInput>,
     payments: Vec<SalePaymentInput>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<String>, String> {
+    require_session(&session, &session_token)?;
     if payments.is_empty() {
         return Err("Informe ao menos um pagamento".to_string());
     }
@@ -553,8 +569,11 @@ pub struct SalePaymentRow {
 #[tauri::command]
 pub fn get_sale_payments(
     sale_id: i64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<SalePaymentRow>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -585,7 +604,13 @@ pub fn get_sale_payments(
 }
 
 #[tauri::command]
-pub fn get_sale_items(sale_id: i64, state: State<DbState>) -> Result<Vec<SaleItemRow>, String> {
+pub fn get_sale_items(
+    sale_id: i64,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<Vec<SaleItemRow>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -666,8 +691,11 @@ fn get_product_sales_history_raw(
 #[tauri::command]
 pub fn get_product_sales_history(
     product_id: i64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<ProductSaleRow>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     get_product_sales_history_raw(&conn, product_id)
 }
@@ -2027,6 +2055,14 @@ mod tests {
             (out_qty - 1.0).abs() < 1e-9,
             "Baixa deve ser gravada mesmo com estoque negativo"
         );
+    }
+
+    #[test]
+    fn commands_reject_invalid_session() {
+        use crate::auth::require_session_with;
+        let session: Option<crate::auth::Session> = None;
+        let err = require_session_with(&session, "bad-token").unwrap_err();
+        assert_eq!(err, "Sessão inválida");
     }
 
     #[test]

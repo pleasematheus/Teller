@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { Spinner } from "@/components/ui/spinner"
 import type { StockMovement } from "@/types/stock"
 import type { Product } from "@/types/product"
@@ -31,7 +31,7 @@ export function MovementHistory() {
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    invoke<Product[]>("list_products").then(setProducts).catch(console.error)
+    authedInvoke<Product[]>("list_products").then(setProducts).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export function MovementHistory() {
       return
     }
     setLoading(true)
-    invoke<StockMovement[]>("list_stock_movements", { productId })
+    authedInvoke<StockMovement[]>("list_stock_movements", { productId })
       .then(setMovements)
       .catch(console.error)
       .finally(() => setLoading(false))

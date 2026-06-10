@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { ProductList } from "./ProductList"
 import { ProductForm } from "./ProductForm"
 import { ProductDetailTabs } from "./ProductDetailTabs"
@@ -39,8 +39,8 @@ export function Products() {
 
   const loadProducts = useCallback(async () => {
     const [list, stock] = await Promise.all([
-      invoke<Product[]>("list_products"),
-      invoke<StockItem[]>("list_stock"),
+      authedInvoke<Product[]>("list_products"),
+      authedInvoke<StockItem[]>("list_stock"),
     ])
     setProducts(list)
     setStockByProduct(new Map(stock.map((s) => [s.product_id, s.current_quantity])))
@@ -48,7 +48,7 @@ export function Products() {
 
   useEffect(() => {
     loadProducts()
-    invoke<PricingRates>("get_pricing_rates").then(setRates).catch(() => {})
+    authedInvoke<PricingRates>("get_pricing_rates").then(setRates).catch(() => {})
   }, [loadProducts])
 
   const openNew = () => {

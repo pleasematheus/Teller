@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { EntryType, FinancialEntry } from "@/types/financeiro";
@@ -20,7 +20,7 @@ export function EntradaList({ entries, entryType, onEdit, onDeleted, onNew }: Pr
     );
     if (!confirmed) return;
     try {
-      await invoke("delete_financial_entry", { id: entry.id });
+      await authedInvoke("delete_financial_entry", { id: entry.id });
       onDeleted();
     } catch (err) {
       alert(String(err));

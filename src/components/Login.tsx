@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke, setSessionToken } from "@/lib/api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ export function Login({ onSuccess }: Props) {
     }
 
     try {
-      const nickname = await invoke<string | null>("find_user", {
+      const nickname = await authedInvoke<string | null>("find_user", {
         identifier: identifier.trim(),
       });
       if (nickname) {
@@ -53,11 +53,12 @@ export function Login({ onSuccess }: Props) {
     setError(null);
 
     try {
-      const user = await invoke<AuthUser>("login", {
+      const resp = await authedInvoke<{ user: AuthUser; session_token: string }>("login", {
         identifier: identifier.trim(),
         password: password.trim(),
       });
-      onSuccess(user);
+      setSessionToken(resp.session_token);
+      onSuccess(resp.user);
     } catch (err) {
       setError(typeof err === "string" ? err : "Credenciais inválidas");
     } finally {

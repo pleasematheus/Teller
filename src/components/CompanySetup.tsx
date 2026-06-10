@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -36,7 +36,7 @@ export function CompanySetup({ user, onComplete }: Props) {
     setError(null);
 
     try {
-      await invoke("create_business_settings", {
+      await authedInvoke("create_business_settings", {
         name: form.name,
         investmentRate: form.investmentRate !== "" ? parseFloat(form.investmentRate) / 100 : null,
         profitMargin: form.profitMargin !== "" ? parseFloat(form.profitMargin) / 100 : null,

@@ -2,6 +2,7 @@ use duckdb::{params, Connection};
 use serde::Serialize;
 use tauri::State;
 
+use crate::auth::{require_session, SessionState};
 use crate::db::DbState;
 
 #[derive(Serialize)]
@@ -161,7 +162,12 @@ pub fn get_pricing_rates_raw(conn: &Connection) -> PricingRates {
 }
 
 #[tauri::command]
-pub fn get_pricing_rates(state: State<DbState>) -> Result<PricingRates, String> {
+pub fn get_pricing_rates(
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<PricingRates, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     Ok(get_pricing_rates_raw(&conn))
 }
@@ -192,7 +198,13 @@ pub fn get_product_loss_rate_raw(conn: &Connection, product_id: i64) -> f64 {
 }
 
 #[tauri::command]
-pub fn get_product_loss_rate(product_id: i64, state: State<DbState>) -> Result<f64, String> {
+pub fn get_product_loss_rate(
+    product_id: i64,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<f64, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     Ok(get_product_loss_rate_raw(&conn, product_id))
 }
@@ -240,7 +252,12 @@ pub fn compute_cmv_from_components(
 }
 
 #[tauri::command]
-pub fn get_realized_margin(state: State<DbState>) -> Result<f64, String> {
+pub fn get_realized_margin(
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<f64, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let margin: f64 = conn
@@ -265,7 +282,12 @@ pub fn get_realized_margin(state: State<DbState>) -> Result<f64, String> {
 }
 
 #[tauri::command]
-pub fn list_products(state: State<DbState>) -> Result<Vec<Product>, String> {
+pub fn list_products(
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<Vec<Product>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     // CAST decimals to DOUBLE: duckdb-rs 1.4.4 reads DECIMAL(5,4) directly as f64 incorrectly
@@ -344,8 +366,11 @@ pub fn create_product(
     final_price: f64,
     unit: String,
     profit_margin: f64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let name = name.trim().to_string();
     validate_product(&name, 0.0)?;
 
@@ -376,8 +401,11 @@ pub fn update_product(
     final_price: f64,
     unit: String,
     profit_margin: f64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let name = name.trim().to_string();
     // cost_price, expected_loss_rate and loss_mode are owned by the purchase event;
     // none of them appear in the SET clause to avoid overwriting purchase-frozen values.
@@ -1376,5 +1404,13 @@ mod tests {
             )
             .unwrap();
         assert!((margin - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn commands_reject_invalid_session() {
+        use crate::auth::require_session_with;
+        let session: Option<crate::auth::Session> = None;
+        let err = require_session_with(&session, "bad-token").unwrap_err();
+        assert_eq!(err, "Sessão inválida");
     }
 }

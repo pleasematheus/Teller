@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ export function EmpresaSection() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    invoke<BusinessInfo>("get_business_info")
+    authedInvoke<BusinessInfo>("get_business_info")
       .then((info) => {
         setForm({
           name: info.name,
@@ -54,7 +54,7 @@ export function EmpresaSection() {
     const profitMargin = form.profitMargin !== "" ? parseFloat(form.profitMargin) / 100 : null;
 
     try {
-      await invoke("update_business_settings", {
+      await authedInvoke("update_business_settings", {
         name: form.name,
         investmentRate,
         profitMargin,

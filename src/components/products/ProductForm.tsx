@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -93,7 +93,7 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
       setFinalPrice(String(product.final_price))
     } else {
       // Criação: sugere preço derivado da margem realizada
-      invoke<number>("get_realized_margin")
+      authedInvoke<number>("get_realized_margin")
         .then((rate) => {
           if (rate === 0) {
             setNoMarginHistory(true)
@@ -115,11 +115,11 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
 
     const isSellable = product?.sellable ?? true
     if (isSellable) {
-      invoke<Product[]>("list_products").then((prods) => {
+      authedInvoke<Product[]>("list_products").then((prods) => {
         setAllInsumos(prods.filter((p) => !p.sellable && p.active))
       }).catch(() => {})
       if (product) {
-        invoke<ProductComponent[]>("list_product_components", { productId: product.id })
+        authedInvoke<ProductComponent[]>("list_product_components", { productId: product.id })
           .then(setComponents)
           .catch(() => {})
       }
@@ -128,7 +128,7 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
   }, [product])
 
   useEffect(() => {
-    invoke<UnitOfMeasure[]>("list_units_of_measure").then((loaded) => {
+    authedInvoke<UnitOfMeasure[]>("list_units_of_measure").then((loaded) => {
       setUnits(loaded);
       // For new products, auto-select the first active unit so the controlled
       // select value matches what is visible. Without this, `unit` stays as
@@ -145,7 +145,7 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
   const handleSellableChange = (val: boolean) => {
     setSellable(val)
     if (val && allInsumos.length === 0) {
-      invoke<Product[]>("list_products").then((prods) => {
+      authedInvoke<Product[]>("list_products").then((prods) => {
         setAllInsumos(prods.filter((p) => !p.sellable && p.active))
       }).catch(() => {})
     }
@@ -156,8 +156,8 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
     const qty = parseInt(newQty)
     if (isNaN(qty) || qty <= 0) return
     try {
-      await invoke("add_product_component", { parentId: product.id, childId: newChildId, quantity: qty })
-      const updated = await invoke<ProductComponent[]>("list_product_components", { productId: product.id })
+      await authedInvoke("add_product_component", { parentId: product.id, childId: newChildId, quantity: qty })
+      const updated = await authedInvoke<ProductComponent[]>("list_product_components", { productId: product.id })
       setComponents(updated)
       setNewChildId(allInsumos[0]?.id ?? 0)
       setNewQty("")
@@ -169,7 +169,7 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
 
   const handleRemoveComponent = async (compId: number) => {
     try {
-      await invoke("remove_product_component", { id: compId })
+      await authedInvoke("remove_product_component", { id: compId })
       setComponents((prev) => prev.filter((c) => c.id !== compId))
     } catch (err) {
       setError(String(err))
@@ -182,7 +182,7 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
     const qty = parseInt(raw)
     if (isNaN(qty) || qty <= 0) return
     try {
-      await invoke("update_product_component", { id: compId, quantity: qty })
+      await authedInvoke("update_product_component", { id: compId, quantity: qty })
       setComponents((prev) => prev.map((c) => c.id === compId ? { ...c, quantity: qty } : c))
       setEditingQty((prev) => { const next = { ...prev }; delete next[compId]; return next })
     } catch (err) {
@@ -214,9 +214,9 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
 
     try {
       if (isEdit) {
-        await invoke("update_product", { id: product.id, ...payload })
+        await authedInvoke("update_product", { id: product.id, ...payload })
       } else {
-        await invoke("create_product", payload)
+        await authedInvoke("create_product", payload)
       }
       onSaved()
     } catch (err) {

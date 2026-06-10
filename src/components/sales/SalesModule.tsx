@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { SalesList } from "./SalesList"
 import { SaleForm } from "./SaleForm"
 import { SaleCloseForm } from "./SaleCloseForm"
@@ -50,8 +50,8 @@ export function SalesModule() {
 
   const loadSales = useCallback(async () => {
     const [open, closed] = await Promise.all([
-      invoke<Sale[]>("list_sales", { status: "open" }),
-      invoke<Sale[]>("list_sales", { status: "closed" }),
+      authedInvoke<Sale[]>("list_sales", { status: "open" }),
+      authedInvoke<Sale[]>("list_sales", { status: "closed" }),
     ])
     setOpenSales(open)
     setClosedSales(closed)
@@ -59,8 +59,8 @@ export function SalesModule() {
 
   useEffect(() => {
     loadSales()
-    invoke<Product[]>("list_products").then(setProducts).catch(() => {})
-    invoke<PricingRates>("get_pricing_rates").then(setRates).catch(() => {})
+    authedInvoke<Product[]>("list_products").then(setProducts).catch(() => {})
+    authedInvoke<PricingRates>("get_pricing_rates").then(setRates).catch(() => {})
   }, [loadSales])
 
   const openNew = () => {

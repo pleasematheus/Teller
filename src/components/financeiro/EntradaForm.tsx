@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,7 +44,7 @@ export function EntradaForm({ entryType, initial, defaultMonth, onSaved, onCance
     try {
       const subtypePayload = entryType === "expense" && expenseSubtype ? expenseSubtype : null;
       if (isEdit) {
-        await invoke("update_financial_entry", {
+        await authedInvoke("update_financial_entry", {
           id: initial.id,
           name: name.trim(),
           category: category.trim(),
@@ -55,7 +55,7 @@ export function EntradaForm({ entryType, initial, defaultMonth, onSaved, onCance
           expenseSubtype: subtypePayload,
         });
       } else {
-        await invoke("create_financial_entry", {
+        await authedInvoke("create_financial_entry", {
           name: name.trim(),
           category: category.trim(),
           amount: parsedAmount,

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { authedInvoke } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
 import { parseSystemSettingBool } from "@/lib/systemSettings";
 
@@ -11,7 +11,7 @@ export function SistemaSection() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<string>("get_system_setting", { key: KEY_MINIMIZE_TO_TRAY })
+    authedInvoke<string>("get_system_setting", { key: KEY_MINIMIZE_TO_TRAY })
       .then((value) => setMinimizeToTray(parseSystemSettingBool(value)))
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
@@ -21,7 +21,7 @@ export function SistemaSection() {
     setError(null);
     setMinimizeToTray(checked);
     try {
-      await invoke("set_system_setting", {
+      await authedInvoke("set_system_setting", {
         key: KEY_MINIMIZE_TO_TRAY,
         value: checked ? "true" : "false",
       });

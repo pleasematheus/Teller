@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { authedInvoke } from "@/lib/api"
 import { Spinner } from "@/components/ui/spinner"
 import type { Purchase } from "@/types/stock"
 
@@ -36,7 +36,7 @@ export function PurchaseHistory({ onEdit, onDeleted }: Props) {
   const load = useCallback((status: StatusFilter) => {
     setLoading(true)
     setCloseError(null)
-    invoke<Purchase[]>("list_purchases", { status })
+    authedInvoke<Purchase[]>("list_purchases", { status })
       .then(setPurchases)
       .catch(console.error)
       .finally(() => setLoading(false))
@@ -50,7 +50,7 @@ export function PurchaseHistory({ onEdit, onDeleted }: Props) {
     setClosing(purchaseId)
     setCloseError(null)
     try {
-      await invoke("close_purchase", { purchaseId })
+      await authedInvoke("close_purchase", { purchaseId })
       load(filter)
     } catch (err) {
       setCloseError(String(err))
@@ -64,7 +64,7 @@ export function PurchaseHistory({ onEdit, onDeleted }: Props) {
     setDeleting(purchaseId)
     setDeleteError(null)
     try {
-      await invoke("delete_purchase", { purchaseId })
+      await authedInvoke("delete_purchase", { purchaseId })
       onDeleted()
       load(filter)
     } catch (err) {

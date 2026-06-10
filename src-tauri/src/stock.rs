@@ -2,6 +2,7 @@ use duckdb::{params, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::auth::{require_session, SessionState};
 use crate::db::DbState;
 use crate::products::{
     create_product_in_tx, get_pricing_rates_raw, get_product_loss_rate_raw, validate_loss_mode,
@@ -104,7 +105,12 @@ pub struct PurchaseDraft {
 }
 
 #[tauri::command]
-pub fn list_stock(state: State<DbState>) -> Result<Vec<StockItem>, String> {
+pub fn list_stock(
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<Vec<StockItem>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -403,8 +409,11 @@ fn do_close_effects(conn: &Connection, purchase_id: i64) -> Result<(), String> {
 pub fn create_purchase(
     freight: f64,
     items: Vec<PurchaseItemInput>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     if items.is_empty() {
         return Err("A compra deve ter ao menos um item".to_string());
     }
@@ -430,7 +439,13 @@ pub fn create_purchase(
 }
 
 #[tauri::command]
-pub fn close_purchase(purchase_id: i64, state: State<DbState>) -> Result<(), String> {
+pub fn close_purchase(
+    purchase_id: i64,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let status: String = conn
@@ -464,8 +479,11 @@ pub fn create_stock_adjustment(
     quantity: f64,
     motive: String,
     note: Option<String>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     if quantity == 0.0 {
         return Err("Quantidade não pode ser zero".to_string());
     }
@@ -492,8 +510,11 @@ pub fn create_stock_adjustment(
 #[tauri::command]
 pub fn list_stock_movements(
     product_id: i64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<StockMovement>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -529,8 +550,11 @@ pub fn list_stock_movements(
 #[tauri::command]
 pub fn list_product_components(
     product_id: i64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<ProductComponent>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
@@ -567,8 +591,11 @@ pub fn add_product_component(
     parent_id: i64,
     child_id: i64,
     quantity: i64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     if parent_id == child_id {
         return Err("Um produto não pode ser componente de si mesmo".to_string());
     }
@@ -626,7 +653,13 @@ pub fn add_product_component(
 }
 
 #[tauri::command]
-pub fn remove_product_component(id: i64, state: State<DbState>) -> Result<(), String> {
+pub fn remove_product_component(
+    id: i64,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let rows = conn
@@ -647,8 +680,11 @@ pub fn remove_product_component(id: i64, state: State<DbState>) -> Result<(), St
 pub fn update_product_component(
     id: i64,
     quantity: i64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     if quantity <= 0 {
         return Err("Quantidade deve ser maior que zero".to_string());
     }
@@ -674,8 +710,11 @@ pub fn update_product_component(
 #[tauri::command]
 pub fn list_purchases(
     status: Option<String>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<Purchase>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
 
     let purchases = if let Some(ref s) = status {
@@ -733,8 +772,11 @@ pub fn list_purchases(
 #[tauri::command]
 pub fn get_purchase_draft(
     purchase_id: i64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<PurchaseDraft, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let (freight, status): (f64, String) = conn
         .query_row(
@@ -797,8 +839,11 @@ pub fn update_purchase(
     purchase_id: i64,
     freight: f64,
     items: Vec<PurchaseItemInput>,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let status: String = conn
         .query_row(
@@ -900,7 +945,13 @@ pub fn update_purchase(
 }
 
 #[tauri::command]
-pub fn delete_purchase(purchase_id: i64, state: State<DbState>) -> Result<(), String> {
+pub fn delete_purchase(
+    purchase_id: i64,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let status: String = conn
         .query_row(
@@ -982,8 +1033,11 @@ fn list_product_purchases_raw(
 #[tauri::command]
 pub fn list_product_purchases(
     product_id: i64,
+    session_token: String,
     state: State<DbState>,
+    session: State<SessionState>,
 ) -> Result<Vec<ProductPurchaseRow>, String> {
+    require_session(&session, &session_token)?;
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     list_product_purchases_raw(&conn, product_id)
 }
@@ -2441,5 +2495,13 @@ mod tests {
             rows.is_empty(),
             "rascunhos abertos nao devem aparecer no historico de compras"
         );
+    }
+
+    #[test]
+    fn commands_reject_invalid_session() {
+        use crate::auth::require_session_with;
+        let session: Option<crate::auth::Session> = None;
+        let err = require_session_with(&session, "bad-token").unwrap_err();
+        assert_eq!(err, "Sessão inválida");
     }
 }
