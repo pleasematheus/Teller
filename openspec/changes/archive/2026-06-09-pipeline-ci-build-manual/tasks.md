@@ -20,9 +20,9 @@
 ## 3. Configuração do gate de aprovação (GitHub, manual)
 
 - [x] 3.1 Criar Environment `build-approval` no repositório `pleasematheus/Teller`
-- [ ] 3.2 Configurar required reviewers na Environment `build-approval`
-- [ ] 3.3 (Manual) Disparar build de teste e confirmar que fica pendente até aprovação
-- [ ] 3.4 (Manual) Aprovar e confirmar geração + upload dos artefatos nsis e msi
+- [x] 3.2 Configurar required reviewers na Environment `build-approval`
+- [x] 3.3 (Manual) Disparar build de teste e confirmar que fica pendente até aprovação
+- [x] 3.4 (Manual) Aprovar e confirmar geração + upload dos artefatos nsis e msi
 
 ## 4. Documentação
 
