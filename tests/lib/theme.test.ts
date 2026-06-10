@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveTheme } from "./theme";
+import { resolveTheme } from "@/lib/theme";
 
 describe("resolveTheme", () => {
   it("returns light when theme is light", () => {

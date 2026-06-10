@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { buildPurchaseItemPayload } from "./buildPurchaseItemPayload"
-import type { ItemBuildInput } from "./buildPurchaseItemPayload"
+import { buildPurchaseItemPayload } from "@/lib/buildPurchaseItemPayload"
+import type { ItemBuildInput } from "@/lib/buildPurchaseItemPayload"
 import type { PricingRates } from "@/types/product"
 
 const baseExisting: ItemBuildInput = {

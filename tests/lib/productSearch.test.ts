@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { normalize, matchesProduct, rankProducts } from "./productSearch"
+import { normalize, matchesProduct, rankProducts } from "@/lib/productSearch"
 import type { Product } from "@/types/product"
 
 function makeProduct(overrides: Partial<Product> & { id: number; name: string }): Product {

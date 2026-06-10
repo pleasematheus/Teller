@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dreToSankey } from "./dre";
+import { dreToSankey } from "@/lib/dre";
 import type { DreResult } from "@/types/relatorios";
 
 const baseDre: DreResult = {

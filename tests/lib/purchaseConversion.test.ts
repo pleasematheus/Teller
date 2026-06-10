@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { computeUnitQtyFactor, computeStockQty } from "./purchaseConversion"
+import { computeUnitQtyFactor, computeStockQty } from "@/lib/purchaseConversion"
 
 describe("computeUnitQtyFactor", () => {
   it("returns null when unitsPerBox is 0 or negative", () => {
