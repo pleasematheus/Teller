@@ -36,3 +36,10 @@
 - Frontend: React 19, TypeScript, Tailwind 4, shadcn/ui, Vitest
 - Backend: Tauri 2, Rust, DuckDB (duckdb = "1.4.4" bundled)
 - Tests: `cargo test` (Rust), `bun run test` (frontend)
+
+## Version Control
+- Use `git rebase` to keep history linear; avoid merge commits.
+- Use `git commit --fixup` and `git rebase -i --autosquash` to fix mistakes in previous commits.
+- Use "version" in package.json to track frontend version; increment with each release. Use semantic versioning (MAJOR.MINOR.PATCH).
+- Use "version" in Cargo.toml to track backend version; increment with each release. Use semantic versioning (MAJOR.MINOR.PATCH).
+- Every realease must have a corresponding Git tag in the format `vMAJOR.MINOR.PATCH` (e.g., v0.1.4).
