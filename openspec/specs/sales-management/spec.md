@@ -172,9 +172,33 @@ O sistema SHALL permitir, no fechamento, escolher para cada pagamento o método 
 - **WHEN** o operador confirma o pagamento com uma parcela escolhida
 - **THEN** o `installments` escolhido é enviado ao `close_sale` e determina a taxa aplicada ao `net_amount`
 
+### Requirement: Troco em pagamento de dinheiro no fechamento
+
+O sistema SHALL permitir, no fechamento, que linhas de pagamento de um método marcado como dinheiro (`is_cash = true`) recebam um valor entregue pelo cliente maior que o valor que quita a venda, derivando o valor aplicado e exibindo o troco a devolver, sem alterar o registro persistido do pagamento (apenas os valores aplicados são enviados ao `close_sale`).
+
+#### Scenario: Pagamento único em dinheiro com troco
+- **WHEN** o operador seleciona um método `is_cash` e informa um valor "Recebido" maior que o total da venda
+- **THEN** o sistema define o valor aplicado igual ao total restante, exibe `troco = recebido − aplicado` e habilita o fechamento
+
+#### Scenario: Recebido igual ao total
+- **WHEN** o operador informa "Recebido" exatamente igual ao valor restante numa linha `is_cash`
+- **THEN** o troco exibido é `0,00` e o fechamento é habilitado
+
+#### Scenario: Recebido insuficiente
+- **WHEN** o operador informa "Recebido" menor que o valor restante numa linha `is_cash` e não há outras linhas que cubram o restante
+- **THEN** o sistema mantém `remaining > 0`, não habilita o fechamento e sinaliza valor insuficiente
+
+#### Scenario: Split com dinheiro e outro método
+- **WHEN** o operador divide o pagamento entre um método não-dinheiro (valor aplicado informado) e uma linha `is_cash` cujo "Recebido" excede o restante
+- **THEN** o aplicado da linha de dinheiro é `min(recebido, restante após as demais linhas)`, o troco é `recebido − aplicado`, e o fechamento é habilitado quando a soma dos aplicados iguala o total
+
+#### Scenario: Método não marcado como dinheiro não gera troco
+- **WHEN** o método selecionado tem `is_cash = false`
+- **THEN** a linha não exibe campo "Recebido" nem troco, e o valor informado é o próprio valor aplicado (comportamento atual)
+
 ### Requirement: Fechamento de pedido com pagamento
 
-O sistema SHALL registrar o pagamento de um pedido — incluindo os descontos aplicados no fechamento, a modalidade/parcelas de cada pagamento e a taxa retida — e mudar seu status para `closed`, disparando as ordens de produção e consumindo automaticamente o estoque dos itens vendidos. Ao fechar, o sistema SHALL aplicar os descontos informados aos itens, recalcular o `total_value` e validar o pagamento contra esse total descontado, tudo em uma transação. O consumo de estoque segue a regra: se o item vendável possui componentes em `Product_Components`, consome os insumos da ficha técnica; caso contrário, consome o próprio produto (produto de revenda). A emissão de avisos de estoque insuficiente SHALL ser condicionada ao parâmetro `allow_negative_stock_sale`: quando `'false'` (padrão), o sistema emite avisos; quando `'true'`, o sistema prossegue silenciosamente. Em ambos os casos a venda prossegue e a baixa de estoque ocorre.
+O sistema SHALL registrar o pagamento de um pedido — incluindo os descontos aplicados no fechamento, a modalidade/parcelas de cada pagamento e a taxa retida — e mudar seu status para `closed`, disparando as ordens de produção e consumindo automaticamente o estoque dos itens vendidos. A validação de fechamento SHALL exigir que a soma dos valores **aplicados** (`amount_paid`) seja igual ao `total_value`; para métodos `is_cash`, o valor aplicado é derivado do valor recebido e o excedente é tratado como troco, não compondo `amount_paid`. Ao fechar, o sistema SHALL aplicar os descontos informados aos itens, recalcular o `total_value` e validar o pagamento contra esse total descontado, tudo em uma transação. O consumo de estoque segue a regra: se o item vendável possui componentes em `Product_Components`, consome os insumos da ficha técnica; caso contrário, consome o próprio produto (produto de revenda). A emissão de avisos de estoque insuficiente SHALL ser condicionada ao parâmetro `allow_negative_stock_sale`: quando `'false'` (padrão), o sistema emite avisos; quando `'true'`, o sistema prossegue silenciosamente. Em ambos os casos a venda prossegue e a baixa de estoque ocorre.
 
 #### Scenario: Aplicação de desconto no fechamento
 - **WHEN** o command `close_sale` é invocado com a lista de itens contendo `discount` por item
@@ -183,6 +207,10 @@ O sistema SHALL registrar o pagamento de um pedido — incluindo os descontos ap
 #### Scenario: Fechamento com pagamento único
 - **WHEN** o command `close_sale` é invocado com os itens descontados e um único `Sale_Payment` cujo `amount_paid = total_value` recalculado, informando `payment_method_id` e `installments`
 - **THEN** o sistema insere o registro em `Sale_Payments` com `net_amount = amount_paid × (1 − fee_percent) − fixed_fee` da taxa correspondente a `(payment_method_id, installments)`, grava o snapshot da taxa aplicada, cria `Production_Orders` para cada item com `product.sellable = true`, consome o estoque via `Stock_Movements`, popula `Production_Inputs` quando há componentes e atualiza `Sales.status = 'closed'`, tudo em uma transação
+
+#### Scenario: Pagamento em dinheiro com troco envia apenas o aplicado
+- **WHEN** o fechamento ocorre com uma linha `is_cash` cujo recebido excede o total
+- **THEN** o `close_sale` recebe `amount_paid` igual ao valor aplicado (não ao recebido), de forma que `Σ amount_paid = total_value`, e nenhum valor de troco é persistido
 
 #### Scenario: Fechamento com split payment
 - **WHEN** o command `close_sale` é invocado com os itens descontados e múltiplos `Sale_Payments` cuja soma de `amount_paid = total_value` recalculado, cada um com seu `payment_method_id` e `installments`
@@ -230,7 +258,7 @@ O sistema SHALL retornar os métodos de pagamento ativos para seleção no fecha
 
 #### Scenario: Métodos disponíveis
 - **WHEN** o command `list_payment_methods` é invocado
-- **THEN** o sistema retorna todos os registros de `Payment_Methods` com `active = true`, incluindo `id`, `name` e a lista de taxas (`installments`, `fee_percent`, `fixed_fee`) de cada método
+- **THEN** o sistema retorna todos os registros de `Payment_Methods` com `active = true`, incluindo `id`, `name`, `is_cash` e a lista de taxas (`installments`, `fee_percent`, `fixed_fee`) de cada método
 
 #### Scenario: Nenhum método cadastrado
 - **WHEN** não há registros em `Payment_Methods`

@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS "Products" (
 CREATE SEQUENCE IF NOT EXISTS product_components_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Product_Components" (
     "id"                  INTEGER   DEFAULT nextval('product_components_id_seq') PRIMARY KEY,
-    "quantity"            INTEGER        NOT NULL,
+    "quantity"            DECIMAL(10,4)  NOT NULL,
     "parent_id"           INTEGER        NOT NULL,
     "child_id"            INTEGER        NOT NULL,
     "calculated_quantity" DECIMAL(10,4),
@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS "Payment_Methods" (
     "id"         INTEGER   DEFAULT nextval('payment_methods_id_seq') PRIMARY KEY,
     "name"       VARCHAR   NOT NULL,
     "active"     BOOLEAN   NOT NULL,
+    "is_cash"    BOOLEAN   NOT NULL DEFAULT false,
     "updated_at" TIMESTAMP NOT NULL,
     "created_at" TIMESTAMP NOT NULL
 );

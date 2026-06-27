@@ -5,7 +5,7 @@ const SCHEMA: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/d
 
 // Versão do schema. Incrementar em lockstep com novo arquivo em src/db/migrations/ a cada
 // mudança incompatível de schema.sql. Consumida pelo runner de migração embutido.
-const DB_VERSION: &str = "7";
+const DB_VERSION: &str = "9";
 
 pub fn open_database(path: &std::path::Path) -> Result<Connection, duckdb::Error> {
     match Connection::open(path) {
@@ -37,9 +37,34 @@ struct MigrationStep {
     kind: MigrationKind,
 }
 
+fn migrate_v8(conn: &Connection) -> Result<(), String> {
+    // DuckDB 1.4.4 does not support ADD COLUMN with constraints; add nullable first, then backfill.
+    conn.execute_batch(r#"ALTER TABLE "Payment_Methods" ADD COLUMN "is_cash" BOOLEAN;"#)
+        .map_err(|e| e.to_string())?;
+    conn.execute(r#"UPDATE "Payment_Methods" SET "is_cash" = false"#, [])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn migrate_v9(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"ALTER TABLE "Product_Components" ALTER COLUMN "quantity" TYPE DECIMAL(10,4);"#,
+    )
+    .map_err(|e| e.to_string())
+}
+
 // Append-only. Baseline is v6; first real entry targets v7.
 // Never edit or remove released entries — only append new ones.
-static MIGRATIONS: &[MigrationStep] = &[];
+static MIGRATIONS: &[MigrationStep] = &[
+    MigrationStep {
+        version: 8,
+        kind: MigrationKind::Rust(migrate_v8),
+    },
+    MigrationStep {
+        version: 9,
+        kind: MigrationKind::Rust(migrate_v9),
+    },
+];
 
 fn read_db_version(conn: &Connection) -> Result<u32, String> {
     conn.query_row(
@@ -432,6 +457,51 @@ mod migration_tests {
         let target: u32 = DB_VERSION.parse().unwrap();
         run_migrations_inner(&conn, MIGRATIONS, target).unwrap();
         assert_eq!(read_db_version(&conn).unwrap(), target);
+    }
+
+    // Scenario: Banco existente em v7 migra para v8 (is_cash)
+    fn v8_test_add_is_cash(conn: &Connection) -> Result<(), String> {
+        conn.execute_batch(r#"ALTER TABLE "Payment_Methods" ADD COLUMN "is_cash" BOOLEAN;"#)
+            .map_err(|e| e.to_string())?;
+        conn.execute(r#"UPDATE "Payment_Methods" SET "is_cash" = false"#, [])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn migration_v7_to_v8_adds_is_cash_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"CREATE SEQUENCE payment_methods_id_seq START 1;
+               CREATE TABLE "App_Meta" ("key" VARCHAR PRIMARY KEY, "value" VARCHAR NOT NULL);
+               CREATE TABLE "Payment_Methods" (
+                   "id"         INTEGER   DEFAULT nextval('payment_methods_id_seq') PRIMARY KEY,
+                   "name"       VARCHAR   NOT NULL,
+                   "active"     BOOLEAN   NOT NULL,
+                   "updated_at" TIMESTAMP NOT NULL,
+                   "created_at" TIMESTAMP NOT NULL
+               );
+               INSERT INTO "App_Meta" ("key", "value") VALUES ('db_version', '7');
+               INSERT INTO "Payment_Methods" (name, active, updated_at, created_at)
+                   VALUES ('Dinheiro', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);"#,
+        )
+        .unwrap();
+
+        let steps = [MigrationStep {
+            version: 8,
+            kind: MigrationKind::Rust(v8_test_add_is_cash),
+        }];
+        run_migrations_inner(&conn, &steps, 8).unwrap();
+
+        assert_eq!(read_db_version(&conn).unwrap(), 8);
+        let is_cash: bool = conn
+            .query_row(
+                r#"SELECT is_cash FROM "Payment_Methods" WHERE name = 'Dinheiro'"#,
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!is_cash, "existing rows should default to false");
     }
 }
 

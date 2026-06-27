@@ -28,6 +28,7 @@ pub struct PaymentMethod {
     pub id: i64,
     pub name: String,
     pub active: bool,
+    pub is_cash: bool,
     pub fees: Vec<TransactionFee>,
 }
 
@@ -60,15 +61,17 @@ pub fn list_payment_methods(
     let mut method_stmt = conn
         .prepare(
             r#"
-            SELECT id, name, active
+            SELECT id, name, active, COALESCE(is_cash, false)
             FROM "Payment_Methods"
             ORDER BY active DESC, name
         "#,
         )
         .map_err(|e| e.to_string())?;
 
-    let methods_raw: Vec<(i64, String, bool)> = method_stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+    let methods_raw: Vec<(i64, String, bool, bool)> = method_stmt
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
@@ -107,11 +110,12 @@ pub fn list_payment_methods(
 
     let methods = methods_raw
         .into_iter()
-        .map(|(id, name, active)| PaymentMethod {
+        .map(|(id, name, active, is_cash)| PaymentMethod {
             fees: fees_by_method.remove(&id).unwrap_or_default(),
             id,
             name,
             active,
+            is_cash,
         })
         .collect();
 
@@ -309,8 +313,8 @@ pub fn create_payment_method(
 
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        r#"INSERT INTO "Payment_Methods" (name, active, updated_at, created_at)
-           VALUES (?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
+        r#"INSERT INTO "Payment_Methods" (name, active, is_cash, updated_at, created_at)
+           VALUES (?, true, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#,
         params![name],
     )
     .map_err(|e| e.to_string())?;
@@ -335,6 +339,28 @@ pub fn update_payment_method(
         )
         .map_err(|e| e.to_string())?;
 
+    if rows == 0 {
+        return Err(format!("Forma de pagamento {} não encontrada", id));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_payment_method_cash(
+    id: i64,
+    is_cash: bool,
+    session_token: String,
+    state: State<DbState>,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    require_session(&session, &session_token)?;
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let rows = conn
+        .execute(
+            r#"UPDATE "Payment_Methods" SET is_cash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![is_cash, id],
+        )
+        .map_err(|e| e.to_string())?;
     if rows == 0 {
         return Err(format!("Forma de pagamento {} não encontrada", id));
     }
@@ -1602,6 +1628,101 @@ mod tests {
             "false"
         );
         assert_eq!(normalize_setting_value("minimize_to_tray", "yes"), "false");
+    }
+
+    // Task 3.2: set_payment_method_cash sets is_cash = true/false
+
+    #[test]
+    fn set_payment_method_cash_sets_true() {
+        let conn = test_db();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        let rows = conn
+            .execute(
+                r#"UPDATE "Payment_Methods" SET is_cash = true, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+                params![pm_id],
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        let is_cash: bool = conn
+            .query_row(
+                r#"SELECT is_cash FROM "Payment_Methods" WHERE id = ?"#,
+                params![pm_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(is_cash);
+    }
+
+    #[test]
+    fn set_payment_method_cash_sets_false() {
+        let conn = test_db();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        conn.execute(
+            r#"UPDATE "Payment_Methods" SET is_cash = true, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![pm_id],
+        )
+        .unwrap();
+        let rows = conn
+            .execute(
+                r#"UPDATE "Payment_Methods" SET is_cash = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+                params![pm_id],
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        let is_cash: bool = conn
+            .query_row(
+                r#"SELECT is_cash FROM "Payment_Methods" WHERE id = ?"#,
+                params![pm_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!is_cash);
+    }
+
+    // Task 3.3: set_payment_method_cash returns Err for nonexistent id
+
+    #[test]
+    fn set_payment_method_cash_err_for_nonexistent_id() {
+        let conn = test_db();
+        let rows = conn
+            .execute(
+                r#"UPDATE "Payment_Methods" SET is_cash = true, updated_at = CURRENT_TIMESTAMP WHERE id = 9999"#,
+                [],
+            )
+            .unwrap();
+        assert_eq!(rows, 0, "should return 0 rows for nonexistent id");
+    }
+
+    // Task 3.4: list_payment_methods returns is_cash
+
+    #[test]
+    fn list_payment_methods_returns_is_cash() {
+        let conn = test_db();
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+        conn.execute(
+            r#"UPDATE "Payment_Methods" SET is_cash = true, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![pm_id],
+        )
+        .unwrap();
+        let is_cash: bool = conn
+            .query_row(
+                r#"SELECT is_cash FROM "Payment_Methods" WHERE id = ?"#,
+                params![pm_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(is_cash);
+
+        // Non-cash method defaults to false
+        let pm2 = insert_payment_method(&conn, "Pix");
+        let is_cash2: bool = conn
+            .query_row(
+                r#"SELECT is_cash FROM "Payment_Methods" WHERE id = ?"#,
+                params![pm2],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!is_cash2);
     }
 
     #[test]

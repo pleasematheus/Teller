@@ -404,7 +404,7 @@ pub fn do_close_sale_work(
             let mut comp_stmt = conn
                 .prepare(
                     r#"
-                    SELECT pc.child_id, pc.quantity, p.name,
+                    SELECT pc.child_id, CAST(pc.quantity AS DOUBLE), p.name,
                            COALESCE(s.current_quantity, 0.0)
                     FROM "Product_Components" pc
                     JOIN "Products" p ON p.id = pc.child_id
@@ -414,7 +414,7 @@ pub fn do_close_sale_work(
                 )
                 .map_err(|e| e.to_string())?;
 
-            let components: Vec<(i64, i64, String, f64)> = comp_stmt
+            let components: Vec<(i64, f64, String, f64)> = comp_stmt
                 .query_map(params![product_id], |row| {
                     Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
                 })
@@ -447,7 +447,7 @@ pub fn do_close_sale_work(
                 .map_err(|e| e.to_string())?;
             } else {
                 for (child_id, comp_qty, child_name, current_stock) in components {
-                    let qty_to_consume = comp_qty as f64 * quantity as f64;
+                    let qty_to_consume = comp_qty * quantity as f64;
 
                     if current_stock < qty_to_consume && !allow_negative {
                         warnings.push(format!(
@@ -860,7 +860,7 @@ mod tests {
             params![papel_id],
         ).unwrap();
 
-        add_product_component_in_test(&conn, foto_id, papel_id, 2);
+        add_product_component_in_test(&conn, foto_id, papel_id, 2.0);
 
         let sale_id: i64 = conn
             .query_row(
@@ -996,7 +996,7 @@ mod tests {
                VALUES (?, 100.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
             params![papel_id],
         ).unwrap();
-        add_product_component_in_test(&conn, foto_id, papel_id, 2);
+        add_product_component_in_test(&conn, foto_id, papel_id, 2.0);
 
         let sale_id: i64 = conn
             .query_row(
@@ -1112,7 +1112,7 @@ mod tests {
         let papel_id = insert_product(&conn, "Papel", false);
         let pm_id = insert_payment_method(&conn, "Dinheiro");
 
-        add_product_component_in_test(&conn, foto_id, papel_id, 1);
+        add_product_component_in_test(&conn, foto_id, papel_id, 1.0);
 
         let sale_id: i64 = conn
             .query_row(
@@ -1938,7 +1938,7 @@ mod tests {
         let pm_id = insert_payment_method(&conn, "Dinheiro");
         // flag already 'false' from seed; no stock for papel
 
-        add_product_component_in_test(&conn, foto_id, papel_id, 1);
+        add_product_component_in_test(&conn, foto_id, papel_id, 1.0);
 
         let sale_id: i64 = conn
             .query_row(
@@ -2097,5 +2097,73 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0, "Pedido em aberto não deve ter pagamentos");
+    }
+
+    #[test]
+    fn close_sale_consumes_fractional_component_stock() {
+        let conn = test_db();
+        insert_user(&conn, "u", "u", true);
+        let user_id: i64 = conn
+            .query_row(r#"SELECT id FROM "Users" LIMIT 1"#, [], |r| r.get(0))
+            .unwrap();
+        let produto_id = insert_product(&conn, "Copia colorida", true);
+        let tinta_id = insert_product(&conn, "Tinta", false);
+        let pm_id = insert_payment_method(&conn, "Dinheiro");
+
+        conn.execute(
+            r#"INSERT INTO "Stock_Movements" (product_id, quantity, movement_type, motive, created_at)
+               VALUES (?, 100.0, 'in', 'compra', CURRENT_TIMESTAMP)"#,
+            params![tinta_id],
+        )
+        .unwrap();
+
+        // 2.5 mL de tinta por cópia
+        add_product_component_in_test(&conn, produto_id, tinta_id, 2.5);
+
+        let sale_id: i64 = conn
+            .query_row(
+                r#"INSERT INTO "Sales" (user_id, label, status, total_value, updated_at, created_at)
+               VALUES (?, '', 'open', 20.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               RETURNING id"#,
+                params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            r#"INSERT INTO "Sales_Products" (sale_id, product_id, quantity, price, discount, discounted_price, created_at)
+               VALUES (?, ?, 2, 10.0, 0.0, 10.0, CURRENT_TIMESTAMP)"#,
+            params![sale_id, produto_id],
+        )
+        .unwrap();
+
+        let items = vec![SaleItemInput {
+            product_id: produto_id,
+            quantity: 2,
+            discount: 0.0,
+        }];
+        let payments = vec![SalePaymentInput {
+            payment_method_id: pm_id,
+            amount_paid: 20.0,
+            installments: 1,
+        }];
+        conn.execute_batch("BEGIN").unwrap();
+        let warnings = do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+
+        assert!(warnings.is_empty());
+
+        // 2 cópias × 2.5 mL = 5.0 mL consumidos
+        let consumed: f64 = conn
+            .query_row(
+                r#"SELECT CAST(SUM(CASE WHEN movement_type = 'out' THEN quantity ELSE 0 END) AS DOUBLE)
+                   FROM "Stock_Movements" WHERE product_id = ?"#,
+                params![tinta_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            (consumed - 5.0).abs() < 1e-9,
+            "esperado 5.0 mL consumidos, obtido {consumed}"
+        );
     }
 }
