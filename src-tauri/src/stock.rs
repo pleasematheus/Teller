@@ -66,7 +66,7 @@ pub struct ProductComponent {
     pub id: i64,
     pub child_id: i64,
     pub child_name: String,
-    pub quantity: i64,
+    pub quantity: f64,
     pub unit: String,
     pub calculated_quantity: Option<f64>,
     pub use_calculated: bool,
@@ -590,7 +590,7 @@ pub fn list_product_components(
 pub fn add_product_component(
     parent_id: i64,
     child_id: i64,
-    quantity: i64,
+    quantity: f64,
     session_token: String,
     state: State<DbState>,
     session: State<SessionState>,
@@ -599,7 +599,7 @@ pub fn add_product_component(
     if parent_id == child_id {
         return Err("Um produto não pode ser componente de si mesmo".to_string());
     }
-    if quantity <= 0 {
+    if quantity <= 0.0 {
         return Err("Quantidade deve ser maior que zero".to_string());
     }
 
@@ -679,13 +679,13 @@ pub fn remove_product_component(
 #[tauri::command]
 pub fn update_product_component(
     id: i64,
-    quantity: i64,
+    quantity: f64,
     session_token: String,
     state: State<DbState>,
     session: State<SessionState>,
 ) -> Result<(), String> {
     require_session(&session, &session_token)?;
-    if quantity <= 0 {
+    if quantity <= 0.0 {
         return Err("Quantidade deve ser maior que zero".to_string());
     }
 
@@ -1047,7 +1047,7 @@ pub(crate) fn add_product_component_in_test(
     conn: &Connection,
     parent_id: i64,
     child_id: i64,
-    quantity: i64,
+    quantity: f64,
 ) {
     conn.execute(
         r#"INSERT INTO "Product_Components"
@@ -1063,12 +1063,12 @@ pub(crate) fn add_product_component_in_test_result(
     conn: &Connection,
     parent_id: i64,
     child_id: i64,
-    quantity: i64,
+    quantity: f64,
 ) -> Result<(), String> {
     if parent_id == child_id {
         return Err("Um produto não pode ser componente de si mesmo".to_string());
     }
-    if quantity <= 0 {
+    if quantity <= 0.0 {
         return Err("Quantidade deve ser maior que zero".to_string());
     }
     let parent_sellable: bool = conn
@@ -1954,7 +1954,7 @@ mod tests {
         let conn = test_db();
         let parent_id = insert_product(&conn, "Foto 10x15", true);
         let child_id = insert_product(&conn, "Papel Fotográfico", false);
-        add_product_component_in_test(&conn, parent_id, child_id, 1);
+        add_product_component_in_test(&conn, parent_id, child_id, 1.0);
         let count: i64 = conn
             .query_row(
                 r#"SELECT COUNT(*) FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
@@ -1970,7 +1970,7 @@ mod tests {
         let conn = test_db();
         let parent_id = insert_product(&conn, "Papel", false);
         let child_id = insert_product(&conn, "Tinta", false);
-        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 1);
+        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 1.0);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("vendáveis"));
     }
@@ -1980,7 +1980,7 @@ mod tests {
         let conn = test_db();
         let parent_id = insert_product(&conn, "Foto 10x15", true);
         let child_id = insert_product(&conn, "Outro Produto", true);
-        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 1);
+        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 1.0);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("insumos"));
     }
@@ -1989,7 +1989,7 @@ mod tests {
     fn add_product_component_rejects_self_reference() {
         let conn = test_db();
         let id = insert_product(&conn, "Foto 10x15", true);
-        let result = add_product_component_in_test_result(&conn, id, id, 1);
+        let result = add_product_component_in_test_result(&conn, id, id, 1.0);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("si mesmo"));
     }
@@ -1999,7 +1999,7 @@ mod tests {
         let conn = test_db();
         let parent_id = insert_product(&conn, "Foto", true);
         let child_id = insert_product(&conn, "Papel", false);
-        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 0);
+        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 0.0);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Quantidade"));
     }
@@ -2009,8 +2009,8 @@ mod tests {
         let conn = test_db();
         let parent_id = insert_product(&conn, "Foto", true);
         let child_id = insert_product(&conn, "Papel", false);
-        add_product_component_in_test(&conn, parent_id, child_id, 1);
-        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 2);
+        add_product_component_in_test(&conn, parent_id, child_id, 1.0);
+        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 2.0);
         assert!(result.is_err());
     }
 
@@ -2019,7 +2019,7 @@ mod tests {
         let conn = test_db();
         let parent_id = insert_product(&conn, "Foto", true);
         let child_id = insert_product(&conn, "Papel", false);
-        add_product_component_in_test(&conn, parent_id, child_id, 1);
+        add_product_component_in_test(&conn, parent_id, child_id, 1.0);
         let comp_id: i64 = conn
             .query_row(
                 r#"SELECT id FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
@@ -2053,7 +2053,7 @@ mod tests {
         let conn = test_db();
         let parent_id = insert_product(&conn, "Foto", true);
         let child_id = insert_product(&conn, "Papel", false);
-        add_product_component_in_test(&conn, parent_id, child_id, 1);
+        add_product_component_in_test(&conn, parent_id, child_id, 1.0);
         let comp_id: i64 = conn
             .query_row(
                 r#"SELECT id FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
@@ -2063,17 +2063,17 @@ mod tests {
             .unwrap();
         conn.execute(
             r#"UPDATE "Product_Components" SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
-            params![5_i64, comp_id],
+            params![5.0_f64, comp_id],
         )
         .unwrap();
-        let qty: i64 = conn
+        let qty: f64 = conn
             .query_row(
                 r#"SELECT quantity FROM "Product_Components" WHERE id = ?"#,
                 params![comp_id],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(qty, 5);
+        assert_eq!(qty, 5.0);
     }
 
     #[test]
@@ -2495,6 +2495,60 @@ mod tests {
             rows.is_empty(),
             "rascunhos abertos nao devem aparecer no historico de compras"
         );
+    }
+
+    #[test]
+    fn add_product_component_accepts_fractional_qty() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Copia colorida", true);
+        let child_id = insert_product(&conn, "Tinta", false);
+        add_product_component_in_test(&conn, parent_id, child_id, 2.5);
+        let qty: f64 = conn
+            .query_row(
+                r#"SELECT CAST(quantity AS DOUBLE) FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
+                params![parent_id, child_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(qty, 2.5);
+    }
+
+    #[test]
+    fn add_product_component_rejects_non_positive_fraction() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Foto", true);
+        let child_id = insert_product(&conn, "Tinta", false);
+        let result = add_product_component_in_test_result(&conn, parent_id, child_id, 0.0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Quantidade"));
+    }
+
+    #[test]
+    fn update_product_component_accepts_fractional_qty() {
+        let conn = test_db();
+        let parent_id = insert_product(&conn, "Foto", true);
+        let child_id = insert_product(&conn, "Tinta", false);
+        add_product_component_in_test(&conn, parent_id, child_id, 1.0);
+        let comp_id: i64 = conn
+            .query_row(
+                r#"SELECT id FROM "Product_Components" WHERE parent_id = ? AND child_id = ?"#,
+                params![parent_id, child_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            r#"UPDATE "Product_Components" SET quantity = 0.5, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#,
+            params![comp_id],
+        )
+        .unwrap();
+        let qty: f64 = conn
+            .query_row(
+                r#"SELECT CAST(quantity AS DOUBLE) FROM "Product_Components" WHERE id = ?"#,
+                params![comp_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(qty, 0.5);
     }
 
     #[test]

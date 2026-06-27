@@ -5,7 +5,7 @@ const SCHEMA: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/d
 
 // Versão do schema. Incrementar em lockstep com novo arquivo em src/db/migrations/ a cada
 // mudança incompatível de schema.sql. Consumida pelo runner de migração embutido.
-const DB_VERSION: &str = "8";
+const DB_VERSION: &str = "9";
 
 pub fn open_database(path: &std::path::Path) -> Result<Connection, duckdb::Error> {
     match Connection::open(path) {
@@ -46,12 +46,23 @@ fn migrate_v8(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn migrate_v9(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"ALTER TABLE "Product_Components" ALTER COLUMN "quantity" TYPE DECIMAL(10,4);"#,
+    )
+    .map_err(|e| e.to_string())
+}
+
 // Append-only. Baseline is v6; first real entry targets v7.
 // Never edit or remove released entries — only append new ones.
 static MIGRATIONS: &[MigrationStep] = &[
     MigrationStep {
         version: 8,
         kind: MigrationKind::Rust(migrate_v8),
+    },
+    MigrationStep {
+        version: 9,
+        kind: MigrationKind::Rust(migrate_v9),
     },
 ];
 

@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS "Products" (
 CREATE SEQUENCE IF NOT EXISTS product_components_id_seq START 1;
 CREATE TABLE IF NOT EXISTS "Product_Components" (
     "id"                  INTEGER   DEFAULT nextval('product_components_id_seq') PRIMARY KEY,
-    "quantity"            INTEGER        NOT NULL,
+    "quantity"            DECIMAL(10,4)  NOT NULL,
     "parent_id"           INTEGER        NOT NULL,
     "child_id"            INTEGER        NOT NULL,
     "calculated_quantity" DECIMAL(10,4),

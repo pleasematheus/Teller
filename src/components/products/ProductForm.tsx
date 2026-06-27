@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { computePrice, computeMarginFromPrice, computeCmvFromComponents } from "@/lib/pricing"
+import { isUnitInteger, validateQuantity } from "@/lib/unitQuantity"
 import type { Product, PricingRates } from "@/types/product"
 import type { ProductComponent } from "@/types/stock"
 import type { UnitOfMeasure } from "@/types/units"
@@ -153,8 +154,11 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
 
   const handleAddComponent = async () => {
     if (!product || newChildId === 0 || !newQty) return
-    const qty = parseInt(newQty)
+    const qty = parseFloat(newQty)
     if (isNaN(qty) || qty <= 0) return
+    const insumo = allInsumos.find((p) => p.id === newChildId)
+    const validation = validateQuantity(qty, isUnitInteger(units, insumo?.unit ?? "unidade"))
+    if (!validation.ok) { setError(validation.error ?? "Quantidade inválida"); return }
     try {
       await authedInvoke("add_product_component", { parentId: product.id, childId: newChildId, quantity: qty })
       const updated = await authedInvoke<ProductComponent[]>("list_product_components", { productId: product.id })
@@ -179,8 +183,11 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
   const handleUpdateComponentQty = async (compId: number) => {
     const raw = editingQty[compId]
     if (!raw) return
-    const qty = parseInt(raw)
+    const qty = parseFloat(raw)
     if (isNaN(qty) || qty <= 0) return
+    const comp = components.find((c) => c.id === compId)
+    const validation = validateQuantity(qty, isUnitInteger(units, comp?.unit ?? "unidade"))
+    if (!validation.ok) { setError(validation.error ?? "Quantidade inválida"); return }
     try {
       await authedInvoke("update_product_component", { id: compId, quantity: qty })
       setComponents((prev) => prev.map((c) => c.id === compId ? { ...c, quantity: qty } : c))
@@ -441,7 +448,8 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
                   <>
                     <Input
                       type="number"
-                      min={1}
+                      min={isUnitInteger(units, c.unit) ? 1 : 0.001}
+                      step={isUnitInteger(units, c.unit) ? 1 : 0.001}
                       value={editingQty[c.id]}
                       onChange={(e) => setEditingQty((prev) => ({ ...prev, [c.id]: e.target.value }))}
                       className="w-20 h-8 text-xs"
@@ -469,7 +477,7 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
                       onClick={() => setEditingQty((prev) => ({ ...prev, [c.id]: String(c.quantity) }))}
                       className="text-teller-muted hover:text-teller-text tabular-nums"
                     >
-                      {c.quantity} {c.unit}
+                      {fmtQty(c.quantity)} {c.unit}
                     </button>
                     <button
                       type="button"
@@ -497,7 +505,8 @@ export function ProductForm({ product, rates, stockQuantity, onCancel, onSaved }
                 </select>
                 <Input
                   type="number"
-                  min={1}
+                  min={isUnitInteger(units, allInsumos.find((p) => p.id === newChildId)?.unit ?? "unidade") ? 1 : 0.001}
+                  step={isUnitInteger(units, allInsumos.find((p) => p.id === newChildId)?.unit ?? "unidade") ? 1 : 0.001}
                   placeholder="Qtd"
                   value={newQty}
                   onChange={(e) => setNewQty(e.target.value)}
