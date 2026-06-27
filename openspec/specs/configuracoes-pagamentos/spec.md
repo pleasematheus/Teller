@@ -94,8 +94,28 @@ O sistema SHALL permitir visualizar e editar as taxas de transação de uma form
 - **WHEN** o usuário clica em "Cancelar" no form de edição
 - **THEN** o painel retorna à lista de formas de pagamento sem persistir alterações
 
+### Requirement: Marcar método de pagamento como dinheiro
+
+O sistema SHALL permitir que o usuário marque um método de pagamento como dinheiro (`is_cash`), atributo que habilita o cálculo de troco no fechamento. O atributo SHALL ser persistido em `Payment_Methods.is_cash` e retornado por `list_payment_methods`.
+
+#### Scenario: Marcar método como dinheiro
+- **WHEN** o usuário ativa a opção "dinheiro" de um método na tela de pagamentos
+- **THEN** o sistema invoca `set_payment_method_cash(id, true)`, persiste `is_cash = true` e a tela reflete o estado
+
+#### Scenario: Desmarcar método como dinheiro
+- **WHEN** o usuário desativa a opção "dinheiro" de um método
+- **THEN** o sistema invoca `set_payment_method_cash(id, false)` e persiste `is_cash = false`
+
+#### Scenario: Listagem inclui o atributo
+- **WHEN** `list_payment_methods` é invocado
+- **THEN** cada método retornado inclui o campo `is_cash`
+
+#### Scenario: Default para métodos existentes
+- **WHEN** a coluna `is_cash` é adicionada via migração a métodos já cadastrados
+- **THEN** os métodos existentes recebem `is_cash = false` por padrão
+
 ### Requirement: Commands de gerenciamento de pagamentos
-O sistema SHALL expor os Tauri commands `create_payment_method`, `update_payment_method`, `rename_payment_method`, `delete_payment_method`, `list_transaction_fees` e `upsert_transaction_fee`, sendo as taxas identificadas por número de parcelas (`installments`).
+O sistema SHALL expor os Tauri commands `create_payment_method`, `update_payment_method`, `set_payment_method_cash`, `rename_payment_method`, `delete_payment_method`, `list_transaction_fees` e `upsert_transaction_fee`, sendo as taxas identificadas por número de parcelas (`installments`).
 
 #### Scenario: create_payment_method com nome válido
 - **WHEN** `create_payment_method` é chamado com nome não-vazio
@@ -108,6 +128,14 @@ O sistema SHALL expor os Tauri commands `create_payment_method`, `update_payment
 #### Scenario: update_payment_method alterna status
 - **WHEN** `update_payment_method` é chamado com `id` válido e novo valor de `active`
 - **THEN** o registro correspondente em `Payment_Methods` é atualizado
+
+#### Scenario: set_payment_method_cash persiste is_cash
+- **WHEN** `set_payment_method_cash` é chamado com `id` válido e `is_cash: bool`
+- **THEN** o campo `is_cash` em `Payment_Methods` é atualizado para o valor informado
+
+#### Scenario: set_payment_method_cash retorna Err para id inexistente
+- **WHEN** `set_payment_method_cash` é chamado com `id` que não existe
+- **THEN** o command retorna `Err`
 
 #### Scenario: rename_payment_method atualiza o nome
 - **WHEN** `rename_payment_method` é chamado com `id` válido e `name` não-vazio

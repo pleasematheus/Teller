@@ -1,7 +1,7 @@
 {
   "enabledPlugins": {
     "duckdb-skills@claude-plugins-official": true,
-    "code-review@claude-plugins-official": true,
-    "ralph-loop@claude-plugins-official": true
+    "code-review@claude-plugins-official": false,
+    "ralph-loop@claude-plugins-official": false
   }
 }

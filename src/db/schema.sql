@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS "Payment_Methods" (
     "id"         INTEGER   DEFAULT nextval('payment_methods_id_seq') PRIMARY KEY,
     "name"       VARCHAR   NOT NULL,
     "active"     BOOLEAN   NOT NULL,
+    "is_cash"    BOOLEAN   NOT NULL DEFAULT false,
     "updated_at" TIMESTAMP NOT NULL,
     "created_at" TIMESTAMP NOT NULL
 );

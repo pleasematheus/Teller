@@ -11,6 +11,7 @@ type PaymentMethod = {
   id: number;
   name: string;
   active: boolean;
+  is_cash: boolean;
   fees: TransactionFee[];
 };
 
@@ -78,6 +79,17 @@ export function PagamentosSection() {
       );
     } catch {
       // revert on failure — noop, user sees no change
+    }
+  };
+
+  const handleToggleCash = async (method: PaymentMethod) => {
+    try {
+      await authedInvoke("set_payment_method_cash", { id: method.id, isCash: !method.is_cash });
+      setMethods((prev) =>
+        prev.map((m) => (m.id === method.id ? { ...m, is_cash: !m.is_cash } : m))
+      );
+    } catch {
+      // noop
     }
   };
 
@@ -242,6 +254,14 @@ export function PagamentosSection() {
                 {method.fees.length > 0 && (
                   <span className="text-xs text-teller-muted">{method.fees.length}x</span>
                 )}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-teller-muted">Dinheiro</span>
+                  <Switch
+                    size="sm"
+                    checked={method.is_cash}
+                    onCheckedChange={() => handleToggleCash(method)}
+                  />
+                </div>
                 <button
                   onClick={() => handleOpenEdit(method)}
                   className="text-xs text-teller-secondary hover:text-teller-text cursor-pointer transition-colors"
