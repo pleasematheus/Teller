@@ -2136,8 +2136,16 @@ mod tests {
         )
         .unwrap();
 
-        let items = vec![SaleItemInput { product_id: produto_id, quantity: 2, discount: 0.0 }];
-        let payments = vec![SalePaymentInput { payment_method_id: pm_id, amount_paid: 20.0, installments: 1 }];
+        let items = vec![SaleItemInput {
+            product_id: produto_id,
+            quantity: 2,
+            discount: 0.0,
+        }];
+        let payments = vec![SalePaymentInput {
+            payment_method_id: pm_id,
+            amount_paid: 20.0,
+            installments: 1,
+        }];
         conn.execute_batch("BEGIN").unwrap();
         let warnings = do_close_sale_work(&conn, sale_id, &items, &payments).unwrap();
         conn.execute_batch("COMMIT").unwrap();
@@ -2153,6 +2161,9 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!((consumed - 5.0).abs() < 1e-9, "esperado 5.0 mL consumidos, obtido {consumed}");
+        assert!(
+            (consumed - 5.0).abs() < 1e-9,
+            "esperado 5.0 mL consumidos, obtido {consumed}"
+        );
     }
 }
