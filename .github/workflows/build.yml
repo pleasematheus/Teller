@@ -36,9 +36,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: teller
 
       - name: Type check and build frontend
         run: bun run build
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist
+          path: dist/
 
       - name: Frontend tests
         run: bun run test --run
@@ -63,6 +70,7 @@ jobs:
       contents: write
     env:
       CXXFLAGS: /std:c++17
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
 
     steps:
       - uses: actions/checkout@v6
@@ -73,12 +81,20 @@ jobs:
         run: bun install --frozen-lockfile
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: teller
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+
+      - name: Clear beforeBuildCommand (dist already built)
+        run: bun -e "const fs=require('fs'); const c=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8')); c.build.beforeBuildCommand=''; fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(c,null,2))"
 
       - name: Build Tauri app
         run: bun run tauri build

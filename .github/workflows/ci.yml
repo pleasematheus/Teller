@@ -12,6 +12,8 @@ permissions:
 jobs:
   verify:
     runs-on: windows-latest
+    env:
+      CXXFLAGS: /std:c++17
 
     steps:
       - uses: actions/checkout@v6
@@ -28,6 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: teller
 
       - name: Type check and build frontend
         run: bun run build
