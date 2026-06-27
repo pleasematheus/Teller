@@ -69,7 +69,9 @@ pub fn list_payment_methods(
         .map_err(|e| e.to_string())?;
 
     let methods_raw: Vec<(i64, String, bool, bool)> = method_stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;

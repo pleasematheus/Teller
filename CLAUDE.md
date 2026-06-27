@@ -42,4 +42,4 @@
 - Use `git commit --fixup` and `git rebase -i --autosquash` to fix mistakes in previous commits.
 - Use "version" in package.json to track frontend version; increment with each release. Use semantic versioning (MAJOR.MINOR.PATCH).
 - Use "version" in Cargo.toml to track backend version; increment with each release. Use semantic versioning (MAJOR.MINOR.PATCH).
-- Every realease must have a corresponding Git tag in the format `vMAJOR.MINOR.PATCH` (e.g., v0.1.4).
+- Every release to main branch must have a corresponding Git tag in the format `vMAJOR.MINOR.PATCH` (e.g., v0.1.4).
