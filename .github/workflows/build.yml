@@ -18,6 +18,8 @@ permissions:
 jobs:
   verify:
     runs-on: windows-latest
+    env:
+      CXXFLAGS: /std:c++17
 
     steps:
       - uses: actions/checkout@v6
@@ -59,6 +61,8 @@ jobs:
     environment: build-approval
     permissions:
       contents: write
+    env:
+      CXXFLAGS: /std:c++17
 
     steps:
       - uses: actions/checkout@v6
