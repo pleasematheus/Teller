@@ -68,6 +68,10 @@ pub fn run() {
             run_migrations(Some(&db_path)).map_err(&io_err)?;
             let conn = open_database(&db_path)
                 .map_err(|e| io_err(e.to_string()))?;
+            let _ = conn.execute(
+                r#"UPDATE "App_Meta" SET "value" = ? WHERE "key" = 'app_version'"#,
+                duckdb::params![env!("CARGO_PKG_VERSION")],
+            );
             app.manage(DbState(Mutex::new(conn)));
             app.manage(auth::SessionState::new());
 
@@ -162,6 +166,7 @@ pub fn run() {
             settings::toggle_user_active,
             settings::create_payment_method,
             settings::update_payment_method,
+            settings::set_payment_method_cash,
             settings::rename_payment_method,
             settings::delete_payment_method,
             settings::list_transaction_fees,

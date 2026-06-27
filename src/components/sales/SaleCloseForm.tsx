@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { computeMaxDiscount, applyGlobalDiscount, itemDiscountFraction } from "@/lib/pricing"
+import { calcPayments } from "@/lib/payment"
 import type { Product, PricingRates } from "@/types/product"
 import type { Sale, SaleItem, SaleItemInput, PaymentMethod, SalePaymentInput } from "@/types/sale"
 import type { StockItem } from "@/types/stock"
@@ -144,12 +145,24 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
     (item) => stockMap[item.product_id] !== undefined && stockMap[item.product_id] < item.quantity,
   )
 
-  const totalPaid = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
-  const remaining = discountedTotal - totalPaid
+  const calc = useMemo(() => {
+    const lines = payments.map((p) => {
+      const method = methods.find((m) => m.id === p.methodId)
+      return { amount: parseFloat(p.amount) || 0, is_cash: method?.is_cash ?? false }
+    })
+    return calcPayments(discountedTotal, lines)
+  }, [payments, methods, discountedTotal])
+
+  const remaining = calc.remaining
   const canSubmit =
     Math.abs(remaining) < 0.01 &&
     payments.length > 0 &&
-    payments.every((p) => p.methodId > 0 && (parseFloat(p.amount) || 0) > 0)
+    payments.every((p) => {
+      const method = methods.find((m) => m.id === p.methodId)
+      const amount = parseFloat(p.amount) || 0
+      if (!method || p.methodId <= 0) return false
+      return amount > 0
+    })
 
   const updateLine = (idx: number, field: keyof PaymentLine, value: string | number) => {
     setPayments((prev) =>
@@ -185,9 +198,9 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
         quantity: i.quantity,
         discount: i.discount,
       }))
-      const paymentInputs: SalePaymentInput[] = payments.map((p) => ({
+      const paymentInputs: SalePaymentInput[] = payments.map((p, i) => ({
         payment_method_id: p.methodId,
-        amount_paid: parseFloat(p.amount) || 0,
+        amount_paid: calc.applied[i] ?? 0,
         installments: p.installments,
       }))
       const stockWarnings = await authedInvoke<string[]>("close_sale", {
@@ -339,6 +352,8 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
           {payments.map((p, idx) => {
             const method = methods.find((m) => m.id === p.methodId)
             const hasFees = (method?.fees.length ?? 0) > 0
+            const isCash = method?.is_cash ?? false
+            const lineChange = calc.change[idx] ?? 0
 
             return (
               <div key={idx} className="flex flex-col gap-1.5">
@@ -372,15 +387,19 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
                     </select>
                   )}
 
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="0,00"
-                    value={p.amount}
-                    onChange={(e) => updateLine(idx, "amount", e.target.value)}
-                    className="w-32 shrink-0"
-                  />
+                  <div className="flex flex-col gap-0.5 w-32 shrink-0">
+                    {isCash && (
+                      <span className="text-xs text-teller-muted text-right">Recebido</span>
+                    )}
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="0,00"
+                      value={p.amount}
+                      onChange={(e) => updateLine(idx, "amount", e.target.value)}
+                    />
+                  </div>
                   {payments.length > 1 && (
                     <button
                       type="button"
@@ -391,6 +410,11 @@ export function SaleCloseForm({ sale, products, rates, onCancel, onSaved }: Prop
                     </button>
                   )}
                 </div>
+                {isCash && lineChange > 0.005 && (
+                  <div className="flex justify-end text-xs text-teller-muted pr-8">
+                    Troco: <span className="ml-1 font-medium text-teller-text">{brl.format(lineChange)}</span>
+                  </div>
+                )}
               </div>
             )
           })}
