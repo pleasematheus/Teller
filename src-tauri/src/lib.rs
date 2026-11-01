@@ -14,6 +14,13 @@ pub mod stock;
 
 pub use db::{init_schema, open_database, run_migrations, DbState};
 
+struct StartupState(Option<String>);
+
+#[tauri::command]
+fn get_startup_error(state: tauri::State<StartupState>) -> Option<String> {
+    state.0.clone()
+}
+
 fn resolve_db_path(
     app_env: Option<&str>,
     dev: Option<&str>,
@@ -57,21 +64,23 @@ pub fn run() {
                 db_path_prod.as_deref(),
                 &data_dir,
             );
-            if db_path.starts_with(&data_dir) {
-                std::fs::create_dir_all(&data_dir)?;
-            }
-            let io_err = |e: String| std::io::Error::other(e);
-            let conn = open_database(&db_path)
-                .map_err(|e| io_err(e.to_string()))?;
-            init_schema(&conn).map_err(&io_err)?;
-            drop(conn);
-            run_migrations(Some(&db_path)).map_err(&io_err)?;
-            let conn = open_database(&db_path)
-                .map_err(|e| io_err(e.to_string()))?;
-            let _ = conn.execute(
-                r#"UPDATE "App_Meta" SET "value" = ? WHERE "key" = 'app_version'"#,
-                duckdb::params![env!("CARGO_PKG_VERSION")],
-            );
+            let initialized = (|| {
+                if db_path.starts_with(&data_dir) {
+                    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+                }
+                db::initialize_database(&db_path)
+            })();
+            let conn = match initialized {
+                Ok(conn) => conn,
+                Err(error) => {
+                    app.manage(StartupState(Some(format!(
+                        "Banco: {}\n\n{error}\n\nFeche o Teller. Preserve o banco, o arquivo .wal, se existir, e os backups antes de tentar a recuperação.",
+                        db_path.display()
+                    ))));
+                    return Ok(());
+                }
+            };
+            app.manage(StartupState(None));
             app.manage(DbState(Mutex::new(conn)));
             app.manage(auth::SessionState::new());
 
@@ -117,6 +126,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_startup_error,
             auth::check_setup,
             auth::create_user,
             auth::check_business_setup,
@@ -189,8 +199,10 @@ pub fn run() {
                     event: tauri::WindowEvent::CloseRequested { api, .. },
                     ..
                 } => {
-                    let minimize = app_handle
-                        .state::<DbState>()
+                    let Some(db) = app_handle.try_state::<DbState>() else {
+                        return;
+                    };
+                    let minimize = db
                         .0
                         .lock()
                         .ok()
@@ -215,8 +227,10 @@ pub fn run() {
                     event: tauri::WindowEvent::Destroyed,
                     ..
                 } => {
-                    if let Ok(conn) = app_handle.state::<DbState>().0.lock() {
-                        let _ = conn.execute_batch("CHECKPOINT");
+                    if let Some(db) = app_handle.try_state::<DbState>() {
+                        if let Ok(conn) = db.0.lock() {
+                            let _ = conn.execute_batch("CHECKPOINT");
+                        }
                     }
                 }
                 _ => {}

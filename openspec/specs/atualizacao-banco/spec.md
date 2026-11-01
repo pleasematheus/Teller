@@ -74,13 +74,24 @@ O sistema SHALL migrar um banco que esteja várias versões atrás até a versã
 
 ### Requirement: Restauração e aborto em falha de passo
 
-O sistema SHALL, ao falhar qualquer passo de migração, restaurar o arquivo de backup sobre o banco, abortar a inicialização e expor o erro. O sistema SHALL NOT deixar o banco numa versão intermediária persistida com o binário recusando operar.
+O sistema SHALL, ao falhar qualquer passo de migração, tentar restaurar o backup, abortar a inicialização e expor o erro. O sistema SHALL recusar a restauração automática se houver um WAL pendente. O sistema SHALL preparar uma cópia completa do backup antes de substituir o banco. Se a restauração falhar, o sistema SHALL expor também esse erro e o caminho do backup. O sistema SHALL NOT abrir os módulos de gestão após uma falha.
 
 #### Scenario: Falha no meio de uma cadeia de passos
 - **WHEN** uma migração de 6 para 20 falha no passo 15
 - **THEN** o sistema restaura o backup criado na versão 6
 - **THEN** o sistema aborta a inicialização e expõe o erro
 - **THEN** os dados originais permanecem intactos
+
+#### Scenario: WAL pendente impede a restauração automática
+- **WHEN** existe um WAL ao iniciar a restauração
+- **THEN** o sistema mantém o banco, o WAL e o backup
+- **THEN** o sistema recusa a restauração e informa o erro
+
+#### Scenario: Falha ao ler ou substituir o backup
+- **WHEN** a leitura do backup ou a substituição do banco falha
+- **THEN** o sistema aborta a inicialização
+- **THEN** o sistema informa o erro da migração e o erro da restauração
+- **THEN** o sistema mantém o backup para recuperação
 
 ### Requirement: Instalação nova não executa migrações
 

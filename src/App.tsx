@@ -8,6 +8,7 @@ import { Dashboard } from "./components/Dashboard";
 import { SplashScreen } from "./components/SplashScreen";
 import { applyTheme } from "./lib/theme";
 import { type Theme } from "./types/theme";
+import { getInitialScreen } from "./lib/startup";
 
 type Screen = "loading" | "setup" | "login" | "company-setup" | "dashboard";
 
@@ -16,13 +17,30 @@ export type AuthUser = { id: number; name: string; nickname: string };
 function App() {
   const [screen, setScreen] = useState<Screen>("loading");
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [startupError, setStartupError] = useState<string | null>(null);
+
+  if (startupError) {
+    return (
+      <main className="min-h-screen bg-teller-bg flex items-center justify-center p-6">
+        <div role="alert" className="w-full max-w-xl space-y-4 text-teller-text">
+          <h1 className="text-xl font-semibold">Não foi possível abrir o Teller</h1>
+          <p className="whitespace-pre-wrap break-words text-sm">{startupError}</p>
+        </div>
+      </main>
+    );
+  }
 
   if (screen === "loading") {
     return (
       <SplashScreen
         onFinished={async () => {
-          const hasUsers = await authedInvoke<boolean>("check_setup").catch(() => false);
-          setScreen(hasUsers ? "login" : "setup");
+          try {
+            setScreen(await getInitialScreen());
+          } catch (error) {
+            setStartupError(
+              error instanceof Error ? error.message : String(error)
+            );
+          }
         }}
       />
     );

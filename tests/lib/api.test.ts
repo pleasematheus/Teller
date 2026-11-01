@@ -51,7 +51,7 @@ describe("authedInvoke", () => {
 
   it("public commands: check_setup, check_business_setup, find_user, logout", async () => {
     setSessionToken("tok");
-    const publicCmds = ["check_setup", "check_business_setup", "find_user", "logout"];
+    const publicCmds = ["get_startup_error", "check_setup", "check_business_setup", "find_user", "logout"];
     for (const cmd of publicCmds) {
       mockInvoke.mockClear();
       await authedInvoke(cmd, {});
