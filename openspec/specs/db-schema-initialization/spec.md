@@ -6,6 +6,20 @@ Define o contrato de inicialização do schema DuckDB: criação completa em ban
 
 ## Requirements
 
+### Requirement: Preservação do WAL em falhas de abertura
+
+O sistema SHALL permitir que o DuckDB recupere o WAL durante a abertura. O sistema SHALL NOT excluir o WAL após uma falha de abertura. Se a preparação do banco falhar, o sistema SHALL mostrar o caminho e o erro na tela de inicialização. O sistema SHALL NOT tratar essa falha como ausência de usuários.
+
+#### Scenario: Falha de abertura mantém os arquivos
+- **WHEN** o DuckDB não consegue abrir o banco
+- **THEN** o aplicativo não exclui o WAL para tentar novamente
+- **THEN** a tela informa a falha e o caminho do banco
+- **THEN** o aplicativo não solicita o cadastro do primeiro usuário
+
+#### Scenario: Recuperação após interrupção
+- **WHEN** o processo termina após uma transação confirmada e antes de incorporar o WAL ao banco principal
+- **THEN** a próxima abertura permite que o DuckDB recupere essa transação
+
 ### Requirement: Criação do schema em banco novo
 
 O sistema SHALL criar o schema completo a partir de `src/db/schema.sql` quando o banco estiver vazio (sem as tabelas do schema), e SHALL pular essa criação quando o schema já existir, em uma única passagem na inicialização.

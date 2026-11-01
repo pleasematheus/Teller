@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 let _sessionToken: string | null = null;
 
 const PUBLIC_COMMANDS = new Set([
+  "get_startup_error",
   "check_setup",
   "check_business_setup",
   "find_user",

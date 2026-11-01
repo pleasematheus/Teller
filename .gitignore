@@ -24,7 +24,15 @@ dist-ssr
 *.sw?
 
 .env
+.env.*
+!.env.example
 teller-dev.db
 teller-dev.db.*
+
+# Bancos locais e seus arquivos auxiliares, inclusive backups de migração.
+*.db
+*.db.*
+*.duckdb
+*.duckdb.*
 
 rtk.exe

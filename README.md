@@ -1,42 +1,59 @@
 # Teller
 
-## Recommended IDE Setup
+O Teller é um mini ERP desktop para gestão de produtos, compras, estoque, vendas e finanças. O aplicativo armazena os dados localmente em um banco DuckDB.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+O projeto está em desenvolvimento. Avalie os fluxos e mantenha cópias de segurança antes de usá-lo com dados reais.
 
-## CI/CD
+## Funcionalidades
 
-### Automatic verification
+- Cadastro de produtos, componentes e unidades de medida.
+- Registro de compras, vendas e movimentações de estoque.
+- Configuração de formas de pagamento e acompanhamento financeiro.
+- Relatório de resultados com visualização gráfica.
+- Cadastro de usuários e configuração da empresa.
 
-Every `push` and `pull_request` triggers the CI workflow (`.github/workflows/ci.yml`), which runs:
+## Tecnologias
 
-- TypeScript type check + frontend build (`bun run build`)
-- Frontend tests (`bun run test`)
-- Rust format check (`cargo fmt --check`)
-- Rust lint (`cargo clippy -- -D warnings`)
-- Rust tests (`cargo test`)
+- Tauri 2 e Rust para o aplicativo desktop e as operações de dados.
+- React, TypeScript, Vite e Tailwind CSS para a interface.
+- DuckDB para armazenamento local.
+- Bun, Vitest e testes Rust para desenvolvimento e verificação.
 
-**Push and pull_request never trigger an installer build.**
+## Desenvolvimento no Windows
 
-### Manual build authorization
+Instale o [Bun](https://bun.sh/), o [Rust](https://www.rust-lang.org/tools/install) e os [pré-requisitos do Tauri para Windows](https://v2.tauri.app/start/prerequisites/), incluindo as ferramentas de compilação C++ e o WebView2.
 
-Building the Windows installers (NSIS + MSI) requires explicit authorization. The process has two gates:
+Na raiz do repositório, instale as dependências e crie a configuração local:
 
-1. The workflow must be dispatched manually -- it never runs automatically.
-2. The `bundle` job references the `build-approval` GitHub Environment, which requires approval from a designated reviewer before the job executes.
-
-To trigger a build:
-
-```bash
-# Via GitHub CLI
-gh workflow run build.yml
-
-# With release creation
-gh workflow run build.yml -f create_release=true
+```powershell
+bun install --frozen-lockfile
+Copy-Item .env.example .env
+bun run tauri dev
 ```
 
-Or go to **Actions > Build > Run workflow** in the GitHub UI.
+Na primeira execução, o aplicativo cria o banco e solicita o cadastro do primeiro usuário e da empresa. O comando `bun run dev` inicia apenas o servidor da interface; use `bun run tauri dev` para executar os recursos do aplicativo desktop.
 
-After dispatch, the `verify` job runs first. If it passes, the `bundle` job waits for approval in the `build-approval` environment. A reviewer must approve via the GitHub Actions UI before the installers are built and uploaded as workflow artifacts.
+### Banco de dados
 
-Only repository maintainers configured as required reviewers in the `build-approval` environment can approve builds.
+O arquivo `.env.example` seleciona o ambiente de desenvolvimento e o banco `./teller-dev.db`. Caminhos relativos dependem do diretório de trabalho do processo. Sem `APP_ENV=development`, o aplicativo usa o ambiente de produção e, por padrão, armazena `teller.db` no diretório de dados do aplicativo no Windows. `DB_PATH_DEV` e `DB_PATH_PROD` permitem definir outros caminhos.
+
+O aplicativo cria um backup antes de executar migrações de um banco existente. Faça também backups independentes: feche o Teller por completo, inclusive na bandeja do sistema, antes de copiar o banco. Não inclua bancos, backups ou arquivos `.env` no repositório.
+
+Se a inicialização falhar, consulte o [procedimento de recuperação](docs/database-recovery.md). Preserve o banco e seu WAL antes de qualquer tentativa de recuperação.
+
+## Verificações
+
+```powershell
+bun run build
+bun run test --run
+Set-Location src-tauri
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test
+```
+
+O workflow de CI executa essas verificações no Windows em pushes e pull requests. Para gerar instaladores NSIS e MSI, consulte [docs/build.md](docs/build.md). O workflow de build é manual; a proteção do ambiente `build-approval` depende da configuração do repositório no GitHub.
+
+## Licença
+
+O código do Teller está disponível sob a [Licença Apache 2.0](LICENSE). Consulte as informações sobre [recursos e dependências de terceiros](docs/third-party.md).

@@ -2,6 +2,7 @@
 name = "Teller"
 version = "0.1.6"
 description = "A Tauri App"
+license = "Apache-2.0"
 authors = ["Matheus Fracalossi"]
 edition = "2021"
 

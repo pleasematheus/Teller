@@ -8,17 +8,22 @@ const SCHEMA: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/d
 const DB_VERSION: &str = "9";
 
 pub fn open_database(path: &std::path::Path) -> Result<Connection, duckdb::Error> {
-    match Connection::open(path) {
-        Ok(conn) => Ok(conn),
-        Err(_) => {
-            // WAL replay can fail due to a DuckDB 1.4.4 bug ("DatabaseManager::GetDefaultDatabase
-            // with no default database set"). Delete the stale WAL and retry; the main DB file
-            // remains consistent since WAL data hasn't been applied yet.
-            let wal_path = format!("{}.wal", path.display());
-            let _ = std::fs::remove_file(&wal_path);
-            Connection::open(path)
-        }
-    }
+    // Deixe o DuckDB recuperar o WAL. Uma falha de abertura não autoriza sua exclusão.
+    Connection::open(path)
+}
+
+pub fn initialize_database(path: &std::path::Path) -> Result<Connection, String> {
+    let conn = open_database(path).map_err(|e| e.to_string())?;
+    init_schema(&conn)?;
+    drop(conn);
+    run_migrations(Some(path))?;
+    let conn = open_database(path).map_err(|e| e.to_string())?;
+    conn.execute(
+        r#"UPDATE "App_Meta" SET "value" = ? WHERE "key" = 'app_version'"#,
+        duckdb::params![env!("CARGO_PKG_VERSION")],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn)
 }
 
 pub struct DbState(pub Mutex<Connection>);
@@ -92,11 +97,61 @@ fn backup_db_file(path: &std::path::Path, stored: u32) -> Result<std::path::Path
     Ok(backup)
 }
 
-fn restore_backup(backup: &std::path::Path, db: &std::path::Path) {
-    let _ = std::fs::copy(backup, db);
-    // Delete WAL so DuckDB does not replay migration data on next open.
-    let wal = format!("{}.wal", db.display());
-    let _ = std::fs::remove_file(wal);
+fn adjacent_path(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    std::path::PathBuf::from(name)
+}
+
+fn ensure_no_wal(db: &std::path::Path) -> Result<(), String> {
+    let wal = adjacent_path(db, ".wal");
+    match wal.try_exists() {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(format!(
+            "Restauração automática recusada: existe um WAL em {}. Preserve o banco, o WAL e o backup para recuperação.",
+            wal.display()
+        )),
+        Err(e) => Err(format!("Falha ao verificar o WAL em {}: {e}", wal.display())),
+    }
+}
+
+fn restore_backup(backup: &std::path::Path, db: &std::path::Path) -> Result<(), String> {
+    // Não associe um backup antigo ao WAL de uma migração incompleta.
+    ensure_no_wal(db)?;
+    let mut source = std::fs::File::open(backup)
+        .map_err(|e| format!("Falha ao ler o backup em {}: {e}", backup.display()))?;
+    let staged_path = adjacent_path(db, ".restore");
+    let mut staged = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged_path)
+        .map_err(|e| {
+            format!(
+                "Falha ao preparar a restauração em {}: {e}",
+                staged_path.display()
+            )
+        })?;
+
+    // Copie e sincronize antes de substituir o banco. Não sobrescreva um arquivo de recuperação existente.
+    let result = (|| {
+        std::io::copy(&mut source, &mut staged).map_err(|e| e.to_string())?;
+        staged.sync_all().map_err(|e| e.to_string())?;
+        drop(staged);
+        ensure_no_wal(db)?;
+        std::fs::rename(&staged_path, db).map_err(|e| e.to_string())
+    })();
+
+    if result.is_err() {
+        // Este arquivo foi criado nesta chamada e contém somente a cópia do backup.
+        let _ = std::fs::remove_file(&staged_path);
+    }
+    result.map_err(|e| {
+        format!(
+            "Falha ao restaurar o backup {} em {}: {e}. O backup foi mantido.",
+            backup.display(),
+            db.display()
+        )
+    })
 }
 
 fn apply_sql_step(conn: &Connection, sql: &str, version: u32) -> Result<(), String> {
@@ -166,7 +221,14 @@ pub fn run_migrations(db_path: Option<&std::path::Path>) -> Result<(), String> {
         Some(p) => p,
     };
     let target: u32 = DB_VERSION.parse().expect("DB_VERSION must be a valid u32");
+    migrate_database(path, MIGRATIONS, target)
+}
 
+fn migrate_database(
+    path: &std::path::Path,
+    migrations: &[MigrationStep],
+    target: u32,
+) -> Result<(), String> {
     // Phase 1: read version; conn dropped before backup copy to release Windows file lock.
     let backup = {
         let stored = {
@@ -183,19 +245,26 @@ pub fn run_migrations(db_path: Option<&std::path::Path>) -> Result<(), String> {
             stored
             // conn dropped here: releases file lock before copy
         };
+        ensure_no_wal(path)?;
         backup_db_file(path, stored)?
     };
 
     // Phase 2: migrate (fresh connection, dropped before potential restore).
-    let result = {
-        let conn = Connection::open(path).map_err(|e| e.to_string())?;
-        run_migrations_inner(&conn, MIGRATIONS, target)
-        // conn dropped: DuckDB checkpoints migration state
-    };
+    let result = Connection::open(path)
+        .map_err(|e| e.to_string())
+        .and_then(|conn| {
+            run_migrations_inner(&conn, migrations, target)
+            // conn dropped: DuckDB checkpoints migration state
+        });
 
     if let Err(e) = result {
-        restore_backup(&backup, path);
-        return Err(e);
+        return match restore_backup(&backup, path) {
+            Ok(()) => Err(format!("{e}. O backup foi restaurado.")),
+            Err(restore_error) => Err(format!(
+                "{e}. {restore_error} Backup disponível em {}.",
+                backup.display()
+            )),
+        };
     }
     Ok(())
 }
@@ -246,6 +315,251 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "teller_recovery_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn file(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn run_child_test(name: &str, db: &Path) {
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", name, "--nocapture"])
+            .env("TELLER_WAL_TEST_PATH", db)
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "processo auxiliar falhou: {}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+    }
+
+    // O DuckDB pode manter um arquivo inválido bloqueado até o processo terminar.
+    #[test]
+    #[ignore = "processo auxiliar do teste de falha de abertura"]
+    fn failed_open_process() {
+        let db = std::env::var_os("TELLER_WAL_TEST_PATH").expect("caminho do banco de teste");
+        assert!(open_database(Path::new(&db)).is_err());
+    }
+
+    #[test]
+    fn failed_open_preserves_database_and_wal_bytes() {
+        let dir = TestDir::new();
+        let db = dir.file("teller.db");
+        let wal = adjacent_path(&db, ".wal");
+        std::fs::write(&db, b"banco invalido para simular falha").unwrap();
+        std::fs::write(&wal, b"WAL que deve ser preservado").unwrap();
+
+        run_child_test("db::recovery_tests::failed_open_process", &db);
+
+        assert_eq!(
+            std::fs::read(&db).unwrap(),
+            b"banco invalido para simular falha"
+        );
+        assert_eq!(std::fs::read(&wal).unwrap(), b"WAL que deve ser preservado");
+    }
+
+    #[test]
+    fn restore_refuses_pending_wal_without_changing_any_file() {
+        let dir = TestDir::new();
+        let db = dir.file("teller.db");
+        let backup = dir.file("backup");
+        let wal = adjacent_path(&db, ".wal");
+        std::fs::write(&db, b"banco atual").unwrap();
+        std::fs::write(&backup, b"backup original").unwrap();
+        std::fs::write(&wal, b"transacoes pendentes").unwrap();
+
+        let error = restore_backup(&backup, &db).unwrap_err();
+
+        assert!(error.contains("WAL"));
+        assert_eq!(std::fs::read(&db).unwrap(), b"banco atual");
+        assert_eq!(std::fs::read(&backup).unwrap(), b"backup original");
+        assert_eq!(std::fs::read(&wal).unwrap(), b"transacoes pendentes");
+    }
+
+    #[test]
+    fn missing_backup_returns_error_and_preserves_database() {
+        let dir = TestDir::new();
+        let db = dir.file("teller.db");
+        std::fs::write(&db, b"banco atual").unwrap();
+
+        assert!(restore_backup(&dir.file("ausente"), &db).is_err());
+
+        assert_eq!(std::fs::read(&db).unwrap(), b"banco atual");
+        assert!(!adjacent_path(&db, ".restore").exists());
+    }
+
+    #[test]
+    fn restore_does_not_overwrite_existing_recovery_file() {
+        let dir = TestDir::new();
+        let db = dir.file("teller.db");
+        let backup = dir.file("backup");
+        let staged = adjacent_path(&db, ".restore");
+        std::fs::write(&db, b"banco atual").unwrap();
+        std::fs::write(&backup, b"backup original").unwrap();
+        std::fs::write(&staged, b"recuperacao anterior").unwrap();
+
+        assert!(restore_backup(&backup, &db).is_err());
+
+        assert_eq!(std::fs::read(&db).unwrap(), b"banco atual");
+        assert_eq!(std::fs::read(&staged).unwrap(), b"recuperacao anterior");
+    }
+
+    #[test]
+    fn replacement_failure_returns_error_and_keeps_backup() {
+        let dir = TestDir::new();
+        let db = dir.file("diretorio");
+        let backup = dir.file("backup");
+        std::fs::create_dir(&db).unwrap();
+        std::fs::write(&backup, b"backup original").unwrap();
+
+        assert!(restore_backup(&backup, &db).is_err());
+
+        assert!(db.is_dir());
+        assert_eq!(std::fs::read(&backup).unwrap(), b"backup original");
+        assert!(!adjacent_path(&db, ".restore").exists());
+    }
+
+    #[test]
+    fn failed_migration_restores_original_version_and_data() {
+        let dir = TestDir::new();
+        let db = dir.file("teller.db");
+        {
+            let conn = open_database(&db).unwrap();
+            conn.execute_batch(
+                r#"CREATE TABLE "App_Meta" ("key" VARCHAR PRIMARY KEY, "value" VARCHAR);
+                   INSERT INTO "App_Meta" VALUES ('db_version', '10');
+                   CREATE TABLE "Sentinel" (v INTEGER);
+                   INSERT INTO "Sentinel" VALUES (42);"#,
+            )
+            .unwrap();
+        }
+        fn change_then_fail(conn: &Connection) -> Result<(), String> {
+            conn.execute_batch(r#"UPDATE "Sentinel" SET v = 99;"#)
+                .unwrap();
+            Err("falha sintética".to_string())
+        }
+        let steps = [MigrationStep {
+            version: 11,
+            kind: MigrationKind::Rust(change_then_fail),
+        }];
+
+        let error = migrate_database(&db, &steps, 11).unwrap_err();
+
+        assert!(error.contains("falha sintética"));
+        assert!(error.contains("backup foi restaurado"));
+        let conn = open_database(&db).unwrap();
+        assert_eq!(read_db_version(&conn).unwrap(), 10);
+        let value: i32 = conn
+            .query_row(r#"SELECT v FROM "Sentinel""#, [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn migration_reports_both_errors_when_restore_is_blocked() {
+        let dir = TestDir::new();
+        let db = dir.file("teller.db");
+        {
+            let conn = open_database(&db).unwrap();
+            conn.execute_batch(
+                r#"CREATE TABLE "App_Meta" ("key" VARCHAR PRIMARY KEY, "value" VARCHAR);
+                   INSERT INTO "App_Meta" VALUES ('db_version', '10');"#,
+            )
+            .unwrap();
+        }
+        fn block_restore_then_fail(conn: &Connection) -> Result<(), String> {
+            let staged = adjacent_path(conn.path().unwrap(), ".restore");
+            std::fs::write(staged, b"recuperacao anterior").unwrap();
+            Err("falha sintética".to_string())
+        }
+        let steps = [MigrationStep {
+            version: 11,
+            kind: MigrationKind::Rust(block_restore_then_fail),
+        }];
+
+        let error = migrate_database(&db, &steps, 11).unwrap_err();
+
+        assert!(error.contains("falha sintética"));
+        assert!(error.contains("Falha ao preparar a restauração"));
+        assert!(error.contains("Backup disponível em"));
+        assert_eq!(
+            std::fs::read(adjacent_path(&db, ".restore")).unwrap(),
+            b"recuperacao anterior"
+        );
+        let backup = std::fs::read_dir(&dir.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("teller.db.bak.10.")
+            })
+            .unwrap();
+        let conn = open_database(&backup).unwrap();
+        assert_eq!(read_db_version(&conn).unwrap(), 10);
+    }
+
+    // O processo auxiliar termina sem executar os destrutores da conexão.
+    #[test]
+    #[ignore = "processo auxiliar do teste de recuperação"]
+    fn wal_writer_process() {
+        let db = std::env::var_os("TELLER_WAL_TEST_PATH").expect("caminho do banco de teste");
+        let conn = open_database(Path::new(&db)).unwrap();
+        conn.execute_batch(
+            "SET wal_autocheckpoint = '1GB';
+             CREATE TABLE Sentinel (v INTEGER);
+             CHECKPOINT;
+             INSERT INTO Sentinel VALUES (42);",
+        )
+        .unwrap();
+        std::process::exit(0);
+    }
+
+    #[test]
+    fn committed_transaction_survives_abrupt_process_exit() {
+        let dir = TestDir::new();
+        let db = dir.file("teller.db");
+        run_child_test("db::recovery_tests::wal_writer_process", &db);
+        let wal = adjacent_path(&db, ".wal");
+        assert!(std::fs::metadata(&wal).unwrap().len() > 0);
+
+        let conn = open_database(&db).unwrap();
+
+        let value: i32 = conn
+            .query_row("SELECT v FROM Sentinel", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(value, 42);
+    }
 }
 
 #[cfg(test)]
@@ -414,7 +728,7 @@ mod migration_tests {
             };
 
             assert!(result.is_err(), "expected error from failing step");
-            restore_backup(&backup, &tmp);
+            restore_backup(&backup, &tmp).unwrap();
             // file is now the v10 backup
         }
 
